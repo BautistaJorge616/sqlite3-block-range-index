@@ -1,0 +1,8 @@
+
+# Ignore shared objects
+brin.so
+example.so
+
+# Ignore the database file
+test.db
+
