@@ -2,9 +2,64 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <ctype.h>
 #include <time.h>   // Needed for struct tm and time conversion
 
 SQLITE_EXTENSION_INIT1
+
+typedef enum {
+    BRIN_TYPE_INTEGER,
+    BRIN_TYPE_REAL,
+    BRIN_TYPE_TEXT
+} BrinAffinity;
+
+
+// A generic representation of a BRIN block summary
+typedef struct BrinRange {
+
+    BrinAffinity type;       // INTEGER / REAL / TEXT
+
+    union {
+        struct {             // numeric (INTEGER or REAL)
+            double min;
+            double max;
+        } num;
+
+        struct {             // text (lexicographic min/max)
+            char *min;
+            char *max;
+        } txt;
+
+    } u;
+
+    sqlite3_int64 start_rowid;
+    sqlite3_int64 end_rowid;
+
+} BrinRange;
+
+
+const char* get_affinity(const char *declared_type) {
+    if (!declared_type) return "BLOB";
+
+    char type[64];
+    snprintf(type, sizeof(type), "%s", declared_type);
+    for (int i = 0; type[i]; i++) {
+        type[i] = toupper(type[i]);
+    }
+
+    if (strstr(type, "INT")) return "INTEGER";
+    if (strstr(type, "CHAR") || strstr(type, "CLOB")
+                             || strstr(type, "TEXT")) return "TEXT";
+    if (strstr(type, "REAL") || strstr(type, "FLOA")
+                             || strstr(type, "DOUB")) return "REAL";
+    if (strstr(type, "NUMERIC") || strstr(type, "DECIMAL")
+                                || strstr(type, "BOOLEAN")
+                                || strstr(type, "DATE")
+                                || strstr(type, "DATETIME")) return "NUMERIC";
+
+    return "BLOB"; // default
+}
+
 
 /* --- Structure representing the BRIN virtual table --- */
 typedef struct {
@@ -12,6 +67,10 @@ typedef struct {
   char *table;         // Physical table name (the one we index)
   char *column;        // Column name being indexed
   int block_size;      // Number of rows per block
+  BrinAffinity affinity;
+  BrinRange *ranges;      // dynamically built index ranges
+  int total_blocks;
+  int index_ready;
   sqlite3 *db;         // Pointer to the sqlite3 DB handle (stored at xConnect)
 } BrinVtab;
 
@@ -20,49 +79,10 @@ typedef struct {
 typedef struct {
   sqlite3_vtab_cursor base;  // Base class - required by SQLite
   int current_block;         // Current block index while scanning
-  int total_blocks;          // Total number of blocks
-  struct BrinRange {
-    double min;
-    double max;
-    sqlite3_int64 start_rowid;
-    sqlite3_int64 end_rowid;
-  } *ranges;                 // Dynamic array of block summaries
+  sqlite3_int64 current_rowid;
+  int eof;
 } BrinCursor;
 
-
-/* --- Helper: convert sqlite3_value to double (safe) --- */
-static double brin_value_to_double(sqlite3_value *val){
-  if (!val) return 0.0;
-  int type = sqlite3_value_type(val);
-  switch (type) {
-    case SQLITE_INTEGER: return (double)sqlite3_value_int64(val);
-    case SQLITE_FLOAT:   return sqlite3_value_double(val);
-    case SQLITE_TEXT: {
-      const unsigned char *txt = sqlite3_value_text(val);
-      if (!txt) return 0.0;
-      int Y=0,M=0,D=0,h=0,m=0;
-      double s=0.0;
-      if (sscanf((const char*)txt, "%d-%d-%d %d:%d:%lf", &Y,&M,&D,&h,&m,&s) >= 3){
-        struct tm t;
-        memset(&t,0,sizeof(t));
-        t.tm_year = Y - 1900;
-        t.tm_mon  = (M>0?M-1:0);
-        t.tm_mday = (D>0?D:1);
-        t.tm_hour = h;
-        t.tm_min  = m;
-        t.tm_sec  = (int)s;
-        /* Prefer timegm if available (UTC) otherwise mktime (local) */
-        #ifdef HAVE_TIMEGM
-          return (double)timegm(&t);
-        #else
-          return (double)mktime(&t);
-        #endif
-      }
-      return 0.0;
-    }
-    default: return 0.0;
-  }
-}
 
 /* --- xConnect / xCreate --- */
 static int brinConnect(
@@ -83,36 +103,76 @@ static int brinConnect(
 
   BrinVtab *v = (BrinVtab*)sqlite3_malloc(sizeof(BrinVtab));
   if (v == NULL) return SQLITE_NOMEM;
-
-  fprintf(stdout, "Address of the new index: %p\n", v);
   memset(v,0,sizeof(BrinVtab));
 
-  /* argv layout:
-     argv[0] = module name
-     argv[1] = db name (main/temp)
-     argv[2] = virtual table name
-     argv[3..] = arguments passed in CREATE VIRTUAL TABLE
-                                       ... USING brin(arg1,arg2,...)
-     so we expect argv[3]=table and argv[4]=column
-  */
-
-  v->table =      sqlite3_mprintf("%s",argv[3]);
-  v->column =     sqlite3_mprintf("%s",argv[4]);
+  v->table      = sqlite3_mprintf("%s",argv[3]);
+  v->column     = sqlite3_mprintf("%s",argv[4]);
   v->block_size = atoi(argv[5]);
-  v->db = db; /* store DB handle for safe use in xOpen */
+  v->db         = db;
 
-  if ( v->table == NULL || v->column == NULL ) {
-    fprintf(stderr, "brinConnect: allocation failed for names\n");
-    if (v->table)      sqlite3_free(v->table);
-    if (v->column)     sqlite3_free(v->column);
+  // Get column affinity
+  const char *dataType, *collation;
+  int notNull, isPK, isAuto;
+
+  // Get column metadata
+
+  int rc = 1;
+
+  rc = sqlite3_table_column_metadata(
+        db,
+        "main",
+        v->table,
+        v->column,
+        &dataType,
+        &collation,
+        &notNull,
+        &isPK,
+        &isAuto
+  );
+
+  if (rc != SQLITE_OK) {
+    fprintf(stderr, "Error retrieving metadata: %s\n", sqlite3_errmsg(db));
+    sqlite3_free(v->table);
+    sqlite3_free(v->column);
     sqlite3_free(v);
-    return SQLITE_NOMEM;
+    sqlite3_close(db);
+    return rc;
   }
 
-  /* Expose a simple schema for the virtual table view */
-  int rc = sqlite3_declare_vtab(db,
+  // ToDo: We should add a test to validate this
+  const char *affinity = get_affinity(dataType);
+
+  printf("Affinity %s\n", affinity);
+
+  if ( strcmp(affinity, "INTEGER") == 0 ) {
+    rc = sqlite3_declare_vtab(db,
+           "CREATE TABLE x(min INTEGER, max INTEGER, start_rowid INT, end_rowid INT)"
+    );
+    v->affinity = BRIN_TYPE_INTEGER;
+  }
+  else if ( strcmp(affinity, "REAL") == 0 ) {
+    rc = sqlite3_declare_vtab(db,
            "CREATE TABLE x(min REAL, max REAL, start_rowid INT, end_rowid INT)"
-  );
+    );
+    v->affinity = BRIN_TYPE_REAL;
+  }
+  else if ( strcmp(affinity, "TEXT") == 0 ) {
+    rc = sqlite3_declare_vtab(db,
+           "CREATE TABLE x(min TEXT, max TEXT, start_rowid INT, end_rowid INT)"
+    );
+    v->affinity = BRIN_TYPE_TEXT;
+  }
+  else {
+    fprintf(stderr,
+             "NOT SUPPORTED: %s\n", affinity);
+
+    sqlite3_free(v->table);
+    sqlite3_free(v->column);
+    sqlite3_free(v);
+
+    return SQLITE_ERROR;
+
+  }
 
   if (rc != SQLITE_OK){
     fprintf(stderr,
@@ -159,116 +219,12 @@ static int brinOpen(sqlite3_vtab *p, sqlite3_vtab_cursor **ppCursor){
 
   fprintf(stdout, "-> xOpen\n");
 
-  BrinVtab *v = (BrinVtab*)p;
-  if (!v) return SQLITE_ERROR;
-
-  sqlite3 *db = v->db;
-  if (!db){
-    fprintf(stderr, "brinOpen: stored db handle is NULL\n");
-    return SQLITE_ERROR;
-  }
-
-  BrinCursor *cur = (BrinCursor*)sqlite3_malloc(sizeof(BrinCursor));
-  if (!cur) return SQLITE_NOMEM;
-  memset(cur,0,sizeof(BrinCursor));
-
-  /* Build SELECT SQL - careful with sizes */
-  char sql[1024];
-  int n = snprintf(sql, sizeof(sql), "SELECT rowid, %s FROM %s ORDER BY rowid", v->column, v->table);
-  if (n < 0 || n >= (int)sizeof(sql)) {
-    fprintf(stderr, "brinOpen: SQL buffer overflow or snprintf error\n");
-    sqlite3_free(cur);
-    return SQLITE_ERROR;
-  }
-
-  sqlite3_stmt *stmt = NULL;
-  int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
-  if (rc != SQLITE_OK) {
-    fprintf(stderr, "brinOpen: prepare failed: %s\n", sqlite3_errmsg(db));
-    sqlite3_free(cur);
-    return rc;
-  }
-
-  int capacity = 128;
-  cur->ranges = (struct BrinRange*)sqlite3_malloc(capacity * sizeof(*cur->ranges));
-  if (!cur->ranges){
-    sqlite3_finalize(stmt);
-    sqlite3_free(cur);
-    return SQLITE_NOMEM;
-  }
-
-  double min = 1e308, max = -1e308;
-  sqlite3_int64 start = 0, last = 0;
-  int count = 0;
-
-  while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
-    sqlite3_int64 rowid = sqlite3_column_int64(stmt,0);
-    double val = brin_value_to_double(sqlite3_column_value(stmt,1));
-
-    if (start == 0) start = rowid;
-    if (val < min) min = val;
-    if (val > max) max = val;
-
-    count++;
-    if ((count % v->block_size) == 0) {
-      /* ensure capacity */
-      if (cur->total_blocks >= capacity) {
-        capacity *= 2;
-        void *tmp = sqlite3_realloc(cur->ranges, capacity * sizeof(*cur->ranges));
-        if (!tmp) {
-          fprintf(stderr, "brinOpen: realloc failed\n");
-          sqlite3_finalize(stmt);
-          sqlite3_free(cur->ranges);
-          sqlite3_free(cur);
-          return SQLITE_NOMEM;
-        }
-        cur->ranges = tmp;
-      }
-      cur->ranges[cur->total_blocks].min = min;
-      cur->ranges[cur->total_blocks].max = max;
-      cur->ranges[cur->total_blocks].start_rowid = start;
-      cur->ranges[cur->total_blocks].end_rowid = rowid;
-      cur->total_blocks++;
-      /* reset */
-      start = 0;
-      min = 1e308;
-      max = -1e308;
-    }
-    last = rowid;
-  }
-
-  if (rc != SQLITE_DONE) {
-    fprintf(stderr, "brinOpen: sqlite3_step error: %s\n", sqlite3_errmsg(db));
-    sqlite3_finalize(stmt);
-    sqlite3_free(cur->ranges);
-    sqlite3_free(cur);
-    return rc;
-  }
-
-  if (start != 0) {
-    if (cur->total_blocks >= capacity) {
-      void *tmp = sqlite3_realloc(cur->ranges, (capacity+1) * sizeof(*cur->ranges));
-      if (!tmp) {
-        sqlite3_finalize(stmt);
-        sqlite3_free(cur->ranges);
-        sqlite3_free(cur);
-        return SQLITE_NOMEM;
-      }
-      cur->ranges = tmp;
-    }
-    cur->ranges[cur->total_blocks].min = min;
-    cur->ranges[cur->total_blocks].max = max;
-    cur->ranges[cur->total_blocks].start_rowid = start;
-    cur->ranges[cur->total_blocks].end_rowid = last;
-    cur->total_blocks++;
-  }
-
-  sqlite3_finalize(stmt);
-
-  /* finished building */
-  cur->current_block = 0;
+  (void)p;
+  BrinCursor *cur = sqlite3_malloc(sizeof(BrinCursor));
+  memset(cur, 0, sizeof(BrinCursor));
   *ppCursor = (sqlite3_vtab_cursor*)cur;
   return SQLITE_OK;
+
 }
 
 /* --- xClose --- */
@@ -278,7 +234,6 @@ static int brinClose(sqlite3_vtab_cursor *cur){
 
   BrinCursor *c = (BrinCursor*)cur;
   if (!c) return SQLITE_OK;
-  if (c->ranges) sqlite3_free(c->ranges);
   sqlite3_free(c);
   return SQLITE_OK;
 }
@@ -313,28 +268,15 @@ static int brinEof(sqlite3_vtab_cursor *cur){
 
   BrinCursor *c = (BrinCursor*)cur;
   if (!c) return 1;
-  return (c->current_block >= c->total_blocks);
+  return c->eof;;
 }
 
 /* --- xColumn --- */
 static int brinColumn(sqlite3_vtab_cursor *cur, sqlite3_context *ctx, int i){
 
   fprintf(stdout, "-> xColumn\n");
-
-  BrinCursor *c = (BrinCursor*)cur;
-  if (!c || c->total_blocks <= 0 || c->current_block < 0 || c->current_block >= c->total_blocks){
-    sqlite3_result_null(ctx);
-    return SQLITE_OK;
-  }
-  struct BrinRange r = c->ranges[c->current_block];
-  switch(i){
-    case 0: sqlite3_result_double(ctx, r.min); break;
-    case 1: sqlite3_result_double(ctx, r.max); break;
-    case 2: sqlite3_result_int64(ctx, r.start_rowid); break;
-    case 3: sqlite3_result_int64(ctx, r.end_rowid); break;
-    default: sqlite3_result_null(ctx); break;
-  }
   return SQLITE_OK;
+
 }
 
 /* --- xRowid --- */
