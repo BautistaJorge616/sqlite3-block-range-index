@@ -9,20 +9,54 @@ int main() {
     char *err_msg = 0;   // Error message holder
     int rc;              // Return code for SQLite operations
 
-    // Open or create the SQLite database file named "logs.db"
+    // Open or create the SQLite database file named
     rc = sqlite3_open("test.db", &db);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "Cannot open database: %s\n", sqlite3_errmsg(db));
         return rc;
     }
 
+    // Enable extension loading (mandatory for security reasons)
+    rc = sqlite3_enable_load_extension(db, 1);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr,
+                "Error enabling extension loading: %s\n",
+                sqlite3_errmsg(db));
+        return rc;
+    }
+
+    // Load the extension file 'brin.so'
+    rc = sqlite3_load_extension(db,
+                                "./brin.so",         // Path to the module file
+                                "sqlite3_brin_init", // Entry point function
+                                &err_msg);
+
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Failed to load brin.so: %s\n", err_msg);
+        sqlite3_free(err_msg);
+        return rc;
+    }
+
+
+    // Drop table if exists
+    const char *sql_drop_table = "DROP TABLE IF EXISTS logs;";
+    rc = sqlite3_exec(db, sql_drop_table, 0, 0, &err_msg);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Table drop failed: %s\n", err_msg);
+        sqlite3_free(err_msg);
+        sqlite3_close(db);
+        return rc;
+    }
+
+
     // SQL statement to create the logs table with four columns
     const char *sql_create_table =
         "CREATE TABLE IF NOT EXISTS logs ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-        "integer_date INTEGER, "
-        "real_date REAL, "
-        "text_date TEXT);";
+        "d_integer          INTEGER,"                 // INTEGER
+        "d_text             TEXT,"                    // TEXT
+        "d_real             REAL,"                   // REAL
+        "d_datetime         DATETIME);";
 
     // Execute the SQL statement to create the table
     rc = sqlite3_exec(db, sql_create_table, 0, 0, &err_msg);
@@ -31,61 +65,54 @@ int main() {
         sqlite3_free(err_msg);
         sqlite3_close(db);
         return rc;
+    } else {
+      fprintf(stdout, "Table created.\n");
     }
 
-    // Prepare the SQL insert statement with placeholders
+
+    // Insert rows
     sqlite3_stmt *stmt;
-    const char *sql_insert = "INSERT INTO logs (integer_date, real_date, text_date) VALUES (?, ?, ?);";
-    rc = sqlite3_prepare_v2(db, sql_insert, -1, &stmt, 0);
-    if (rc != SQLITE_OK) {
-        fprintf(stderr, "Insert statement preparation failed: %s\n", sqlite3_errmsg(db));
-        sqlite3_close(db);
-        return rc;
-    }
 
-    // Get the current time as the base timestamp
-    time_t base_time = time(NULL);
+    const char *sql_insert = "INSERT INTO logs "
+                             " (d_integer, "
+                             "  d_text, "
+                             "  d_real, "
+                             "  d_datetime "
+                             " ) VALUES (?, ?, ?, ?);";
 
-    // Begin a transaction for faster bulk insertion
-    sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
+    sqlite3_prepare_v2(db, sql_insert, -1, &stmt, 0);
 
-    // Loop to insert 10,000 rows
-    for (int i = 0; i < 10000; i++) {
-        // Calculate the timestamp for each row, spaced 30 minutes apart
-        time_t current_time = base_time + (i * 1800);  // 1800 seconds = 30 minutes
+    time_t tiempo_raw = time(NULL);
+    struct tm *fecha = localtime(&tiempo_raw);
 
-        // Convert timestamp to human-readable format
-        struct tm *tm_info = localtime(&current_time);
-        char text_date[30];
-        strftime(text_date, sizeof(text_date), "%Y-%m-%d %H:%M:%S", tm_info);
+    // Iniciar transacción (optimiza la escritura de los 100 registros)
+    sqlite3_exec(db, "BEGIN TRANSACTION;", 0, 0, 0);
 
-        // Convert timestamp to double for real_date
-        double real_date = (double)current_time;
+    for (int i = 0; i < 100; i++) {
+        // Normalizamos y obtenemos el timestamp actual del bucle
+        time_t t_actual = mktime(fecha);
 
-        // Bind values to the SQL statement
-        sqlite3_bind_int(stmt, 1, (int)current_time);         // integer_date
-        sqlite3_bind_double(stmt, 2, real_date);              // real_date
-        sqlite3_bind_text(stmt, 3, text_date, -1, SQLITE_STATIC); // text_date
+        char buffer_dt[20]; // YYYY-MM-DD HH:MM:SS
+        strftime(buffer_dt, sizeof(buffer_dt), "%Y-%m-%d %H:%M:%S", fecha);
 
-        // Execute the insert statement
-        rc = sqlite3_step(stmt);
-        if (rc != SQLITE_DONE) {
-            fprintf(stderr, "Insert failed at row %d: %s\n", i, sqlite3_errmsg(db));
-        }
+        // Bind de los valores
+        sqlite3_bind_int64(stmt, 1, (sqlite3_int64)t_actual);
+        sqlite3_bind_text(stmt, 2, buffer_dt, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_double(stmt, 3, (double)t_actual);
+        sqlite3_bind_text(stmt, 4, buffer_dt, -1, SQLITE_TRANSIENT);
 
-        // Reset the statement for the next iteration
+        sqlite3_step(stmt);
         sqlite3_reset(stmt);
+
+        fecha->tm_min += 30;
     }
 
-    // End the transaction
-    sqlite3_exec(db, "END TRANSACTION;", NULL, NULL, NULL);
+    sqlite3_exec(db, "END TRANSACTION;", 0, 0, 0);
 
-    // Finalize the statement and close the database
+
     sqlite3_finalize(stmt);
     sqlite3_close(db);
 
-    // Print completion message
-    printf("Inserted 10,000 log entries spaced 30 minutes apart.\n");
     return 0;
 }
 
