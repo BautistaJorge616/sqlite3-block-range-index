@@ -79,14 +79,14 @@ typedef struct {
 typedef struct {
     sqlite3_vtab_cursor base;
 
-    int useBrin;                 /* ¿usar BRIN o no? */
-    int current_block;           /* bloque actual */
-    int nBlocks;                 /* total de bloques */
+    int useBrin;
+    int current_block;
+    int nBlocks;
 
-    sqlite3_int64 low;           /* límite inferior */
-    sqlite3_int64 high;          /* límite superior */
+    sqlite3_int64 low;
+    sqlite3_int64 high;
 
-    BrinRange *blocks;           /* rangos BRIN */
+    BrinRange *blocks;
 
     int eof;
 } BrinCursor;
@@ -302,7 +302,10 @@ static int brinBuildIndex(BrinVtab *v) {
             if (v->affinity == BRIN_TYPE_TEXT) {
                 const unsigned char *txt = sqlite3_column_text(stmt, 1);
                 const char *s = txt ? (const char*)txt : "";
-                /* since monotonic increasing, last seen is >= previous, but keep safe */
+                /*
+                   since monotonic increasing, last seen is >= previous,
+                   but keep safe
+                */
                 free(current.u.txt.max);
                 current.u.txt.max = strdup(s);
             } else {
@@ -429,7 +432,6 @@ static int brinBestIndex(sqlite3_vtab *pVtab, sqlite3_index_info *pIdxInfo) {
 
     return SQLITE_OK;
 }
-
 
 
 /* ---------------------------
@@ -689,6 +691,7 @@ static int brinDestroy(sqlite3_vtab *pVTab){
     printf("[BRIN] xDestroy\n");
     return brinDisconnect(pVTab);
 }
+
 
 /* --- Module registration structure --- */
 static sqlite3_module BrinModule = {
