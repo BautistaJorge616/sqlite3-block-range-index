@@ -45,8 +45,6 @@ Blocks are built by scanning the base table **in rowid order**, grouping rows in
 
 Example (block_size = 1000):
 
-
-
 ---
 
 ## 3. Key Assumptions (Very Important)
@@ -84,6 +82,26 @@ The index **lives only for the SQLite session**.
 CREATE TABLE logs ( ts INTEGER, message TEXT );
 CREATE VIRTUAL TABLE brin_idx USING brin(logs, ts, 1024);
 ```
+
+
+> ⚠️ If the precompiled `brin.so` binary does not work on your system (due to differences in architecture,
+> SQLite version, or libc), you can build the extension manually from source.
+
+### Requirements
+
+- GCC or Clang
+- SQLite development headers (`sqlite3.h`)
+- SQLite 3.45.1 or newer (recommended)
+
+#### Debian / Ubuntu
+
+```bash
+sudo apt install sqlite3 libsqlite3-dev build-essential
+gcc -fPIC -shared -O2 brin.c -o brin.so -lsqlite3
+```
+
+---
+
 ### Step 2: Use the BRIN metadata table to restrict rowid ranges.
 ```sql
 SELECT l.*
@@ -108,9 +126,9 @@ Without BRIN
 SELECT * FROM logs WHERE ts BETWEEN 100 AND 200;
 ```
 Cost (no index):
-- O(N) full table scan
+- `O(N)` full table scan
 Cost (B-tree index):
-- O(log N) index traversal
+- `O(log N)` index traversal
 - random I/O
 - index maintenance on insert
 
@@ -119,14 +137,14 @@ Cost (B-tree index):
 With BRIN-style access
 
 Let:
-- N = total rows
-- B = block size
-- K = N / B = number of BRIN blocks
+- `N` = total rows
+- `B` = block size
+- `K` = `N / B` = number of BRIN blocks
 
 Costs:
-1. Scan BRIN metadata → O(K)
+1. Scan BRIN metadata → `O(K)`
 2. Select matching blocks → usually very small
-3. Scan selected rowid ranges → O(B × matched_blocks)
+3. Scan selected rowid ranges → `O(B × matched_blocks)`
 
 Total
 ```css
