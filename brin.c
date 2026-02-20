@@ -68,9 +68,15 @@ typedef struct {
   char *column;        // Column name being indexed
   int block_size;      // Number of rows per block
   BrinAffinity affinity;
+
   BrinRange *ranges;      // dynamically built index ranges
   int total_blocks;
+
+  sqlite3_int64 last_indexed_rowid; // for updates
+  int last_block_size;               // Rows currently stored in last block
+
   int index_ready;
+
   sqlite3 *db;         // Pointer to the sqlite3 DB handle (stored at xConnect)
 } BrinVtab;
 
@@ -222,144 +228,352 @@ static void brinDumpRange(const BrinRange *r, int idx) {
 }
 
 
+/* --------------------------------------------------------
+ * brinBuildIndex
+ * Builds full in-memory BRIN index by scanning base table.
+ * Assumes monotonic increasing values (logs).
+ * -------------------------------------------------------- */
+static int brinBuildIndex(BrinVtab *v)
+{
+    if (!v || !v->db)
+        return SQLITE_ERROR;
 
-/* ---------------------------
- * brinBuildIndex:
- * Build the in-memory BRIN ranges by scanning the base table in rowid order.
- * Assumes monotonic increasing values (so min is first in block, max is last).
- * --------------------------- */
-static int brinBuildIndex(BrinVtab *v) {
-    if (!v || !v->db) return SQLITE_ERROR;
+    printf("\n[BRIN] ===== FULL BUILD START =====\n");
+    printf("[BRIN] Table      : %s\n", v->table);
+    printf("[BRIN] Column     : %s\n", v->column);
+    printf("[BRIN] Block size : %d\n", v->block_size);
+    printf("[BRIN] Affinity   : %d\n\n", v->affinity);
 
-    printf("Building BRIN index\n");
-    printf("Table      : %s\n", v->table);
-    printf("Column     : %s\n", v->column);
-    printf("Block size : %d\n", v->block_size);
-    printf("Affinity   : %d\n", v->affinity);
+    /* ------------------------------------------
+     * Free previous index if exists
+     * ------------------------------------------ */
+    if (v->ranges)
+    {
+        printf("[BRIN] Cleaning previous ranges...\n");
 
-
-    /* free any previous ranges */
-    if (v->ranges) {
-        printf("Freeing previous BRIN ranges (%d blocks)", v->total_blocks);
-        if (v->affinity == BRIN_TYPE_TEXT) {
-            for (int i=0;i<v->total_blocks;i++){
+        if (v->affinity == BRIN_TYPE_TEXT)
+        {
+            for (int i = 0; i < v->total_blocks; i++)
+            {
                 free(v->ranges[i].u.txt.min);
                 free(v->ranges[i].u.txt.max);
             }
         }
+
         free(v->ranges);
         v->ranges = NULL;
         v->total_blocks = 0;
     }
 
+    /* ------------------------------------------
+     * Prepare scan query
+     * ------------------------------------------ */
     char sql[1024];
     snprintf(sql, sizeof(sql),
-             "SELECT rowid, %s FROM %s ORDER BY rowid;", v->column, v->table);
+             "SELECT rowid, %s FROM %s ORDER BY rowid;",
+             v->column, v->table);
 
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(v->db, sql, -1, &stmt, NULL);
-    if (rc != SQLITE_OK) {
-        printf("[BRIN] brinBuildIndex: prepare failed: %s\n",
-                sqlite3_errmsg(v->db));
+
+    if (rc != SQLITE_OK)
+    {
+        printf("[BRIN] ERROR preparing scan: %s\n",
+               sqlite3_errmsg(v->db));
         return rc;
     }
 
-    int cap = 256;
-    int count = 0;
-    v->ranges = (BrinRange*)calloc(cap, sizeof(BrinRange));
-    if (!v->ranges) {
+    int capacity = 128; // number of available ranges - This can grow
+    int block_pos = 0;
+    sqlite3_int64 last_rowid_seen = 0; // for updates
+
+    // allocate space for the ranges
+    v->ranges = calloc(capacity, sizeof(BrinRange));
+    if (!v->ranges)
+    {
         sqlite3_finalize(stmt);
         return SQLITE_NOMEM;
     }
 
-    int block_pos = 0;
     BrinRange current;
-    memset(&current, 0, sizeof(current));
+
+    // fill the space with 0
+    memset(&current, 0, sizeof(BrinRange));
     current.type = v->affinity;
 
-    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
-        sqlite3_int64 rowid = sqlite3_column_int64(stmt, 0);
+    printf("[BRIN] Scanning table...\n");
 
-        /* start new block */
-        if (block_pos == 0) {
-            printf("Starting new block at rowid=%lld \n", (long long)rowid);
+    /* ------------------------------------------
+     * Main scan loop
+     * ------------------------------------------ */
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW)
+    {
+
+        // sqlite3_step get 1 row per time
+
+        // extract result at column 0
+        sqlite3_int64 rowid = sqlite3_column_int64(stmt, 0);
+        last_rowid_seen = rowid;
+
+        if (block_pos == 0)
+        {
+            printf("[BRIN] Starting new block at rowid=%lld\n", rowid);
+
             current.start_rowid = rowid;
             current.end_rowid = rowid;
             current.type = v->affinity;
-            if (v->affinity == BRIN_TYPE_TEXT) {
-                const unsigned char *txt = sqlite3_column_text(stmt, 1);
-                const char *s = txt ? (const char*)txt : "";
-                current.u.txt.min = strdup(s);
-                current.u.txt.max = strdup(s);
-            } else {
+
+            if (v->affinity == BRIN_TYPE_TEXT)
+            {
+                const char *txt =
+                    (const char*)sqlite3_column_text(stmt, 1);
+
+                current.u.txt.min = strdup(txt ? txt : "");
+                current.u.txt.max = strdup(txt ? txt : "");
+            }
+            else
+            {
                 double val = sqlite3_column_double(stmt, 1);
                 current.u.num.min = val;
                 current.u.num.max = val;
             }
-        } else {
-            /* update end_rowid and max */
+        }
+        else
+        {
             current.end_rowid = rowid;
-            if (v->affinity == BRIN_TYPE_TEXT) {
-                const unsigned char *txt = sqlite3_column_text(stmt, 1);
-                const char *s = txt ? (const char*)txt : "";
-                /*
-                   since monotonic increasing, last seen is >= previous,
-                   but keep safe
-                */
+
+            if (v->affinity == BRIN_TYPE_TEXT)
+            {
+                const char *txt =
+                    (const char*)sqlite3_column_text(stmt, 1);
+
                 free(current.u.txt.max);
-                current.u.txt.max = strdup(s);
-            } else {
+                current.u.txt.max = strdup(txt ? txt : "");
+            }
+            else
+            {
                 double val = sqlite3_column_double(stmt, 1);
-                if (val > current.u.num.max) current.u.num.max = val;
+                current.u.num.max = val;
             }
         }
 
+        // internal pos at the block -> inside the range
         block_pos++;
 
-        if (block_pos >= v->block_size) {
-            /* push current */
-            if (count >= cap) {
-                cap *= 2;
-                BrinRange *tmp = realloc(v->ranges, cap * sizeof(BrinRange));
-                if (!tmp) {
-                    sqlite3_finalize(stmt);
-                    return SQLITE_NOMEM;
-                }
-                v->ranges = tmp;
+        /* ------------------------------------------
+         * Block full → store it
+         * ------------------------------------------ */
+        if (block_pos >= v->block_size)
+        {
+
+            // increase number of ranges
+            if (v->total_blocks >= capacity)
+            {
+                capacity *= 2;
+                v->ranges = realloc(v->ranges,
+                                    capacity * sizeof(BrinRange));
             }
-            v->ranges[count++] = current;
-            /* reset current */
+
+            v->ranges[v->total_blocks++] = current;
+
+            printf("[BRIN] Block %d stored "
+                   "(rowid %lld - %lld)\n",
+                   v->total_blocks - 1,
+                   current.start_rowid,
+                   current.end_rowid);
+
             memset(&current, 0, sizeof(BrinRange));
             current.type = v->affinity;
             block_pos = 0;
         }
     }
 
-    if (block_pos > 0) {
-        /* push last partial block */
-        if (count >= cap) {
-            cap *= 2;
-            BrinRange *tmp = realloc(v->ranges, cap * sizeof(BrinRange));
-            if (!tmp) {
-                sqlite3_finalize(stmt);
-                return SQLITE_NOMEM;
-            }
-            v->ranges = tmp;
+    /* ------------------------------------------
+     * Store partial block if exists
+     * ------------------------------------------ */
+    if (block_pos > 0)
+    {
+        if (v->total_blocks >= capacity)
+        {
+            capacity *= 2;
+            v->ranges = realloc(v->ranges,
+                                capacity * sizeof(BrinRange));
         }
-        printf("Finalizing block %d\n", count);
-        brinDumpRange(&current, count);
-        v->ranges[count++] = current;
+
+        v->ranges[v->total_blocks++] = current;
+
+        printf("[BRIN] Partial block %d stored "
+               "(rowid %lld - %lld, size=%d)\n",
+               v->total_blocks - 1,
+               current.start_rowid,
+               current.end_rowid,
+               block_pos);
     }
 
     sqlite3_finalize(stmt);
 
-    v->total_blocks = count;
-
-    printf("Finished building BRIN index\n");
-    printf("Total blocks: %d\n", v->total_blocks);
-
+    /* ------------------------------------------
+     * IMPORTANT: Save incremental state
+     * ------------------------------------------ */
+    v->last_indexed_rowid = last_rowid_seen;
+    v->last_block_size = block_pos;
     v->index_ready = 1;
-    printf("[BRIN] brinBuildIndex: built %d blocks\n", v->total_blocks);
+
+    printf("\n[BRIN] ===== FULL BUILD DONE =====\n");
+    printf("[BRIN] Total blocks         : %d\n", v->total_blocks);
+    printf("[BRIN] Last indexed rowid   : %lld\n",
+           v->last_indexed_rowid);
+    printf("[BRIN] Last block size      : %d\n",
+           v->last_block_size);
+    printf("[BRIN] =================================\n\n");
+
+    return SQLITE_OK;
+}
+
+
+/* --------------------------------------------------------
+ * brinIncrementalUpdate
+ * Updates BRIN index incrementally for new appended rows.
+ * Assumes monotonic rowid growth.
+ * -------------------------------------------------------- */
+static int brinIncrementalUpdate(BrinVtab *v)
+{
+    if (!v || !v->db || !v->index_ready)
+        return SQLITE_ERROR;
+
+    printf("\n[BRIN] ===== INCREMENTAL UPDATE START =====\n");
+    printf("[BRIN] Last indexed rowid : %lld\n", v->last_indexed_rowid);
+    printf("[BRIN] Total blocks       : %d\n", v->total_blocks);
+    printf("[BRIN] Last block size    : %d\n", v->last_block_size);
+
+    char sql[1024];
+    snprintf(sql, sizeof(sql),
+             "SELECT rowid, %s FROM %s "
+             "WHERE rowid > ? ORDER BY rowid;",
+             v->column, v->table);
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(v->db, sql, -1, &stmt, NULL);
+
+    if (rc != SQLITE_OK)
+    {
+        printf("[BRIN] ERROR preparing incremental scan: %s\n",
+               sqlite3_errmsg(v->db));
+        return rc;
+    }
+
+    sqlite3_bind_int64(stmt, 1, v->last_indexed_rowid);
+
+    int new_rows = 0;
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW)
+    {
+        sqlite3_int64 rowid = sqlite3_column_int64(stmt, 0);
+        new_rows++;
+
+        printf("[BRIN] New row detected: rowid=%lld\n", rowid);
+
+        BrinRange *lastBlock = &v->ranges[v->total_blocks - 1];
+
+        /* ------------------------------------------
+         * Case 1: Last block still has capacity
+         * ------------------------------------------ */
+        if (v->last_block_size < v->block_size)
+        {
+            printf("[BRIN] Extending block %d\n",
+                   v->total_blocks - 1);
+
+            lastBlock->end_rowid = rowid;
+
+            if (v->affinity == BRIN_TYPE_TEXT)
+            {
+                const char *txt =
+                    (const char*)sqlite3_column_text(stmt, 1);
+
+                free(lastBlock->u.txt.max);
+                lastBlock->u.txt.max = strdup(txt ? txt : "");
+            }
+            else
+            {
+                double val = sqlite3_column_double(stmt, 1);
+                lastBlock->u.num.max = val;
+            }
+
+            v->last_block_size++;
+        }
+        /* ------------------------------------------
+         * Case 2: Need new block
+         * ------------------------------------------ */
+        else
+        {
+            printf("[BRIN] Creating new block at rowid=%lld\n",
+                   rowid);
+
+            BrinRange *tmp = realloc(
+                v->ranges,
+                (v->total_blocks + 1) * sizeof(BrinRange)
+            );
+
+            if (!tmp)
+            {
+                sqlite3_finalize(stmt);
+                return SQLITE_NOMEM;
+            }
+
+            v->ranges = tmp;
+
+            BrinRange *newBlock =
+                &v->ranges[v->total_blocks];
+
+            memset(newBlock, 0, sizeof(BrinRange));
+            newBlock->type = v->affinity;
+            newBlock->start_rowid = rowid;
+            newBlock->end_rowid = rowid;
+
+            if (v->affinity == BRIN_TYPE_TEXT)
+            {
+                const char *txt =
+                    (const char*)sqlite3_column_text(stmt, 1);
+
+                newBlock->u.txt.min = strdup(txt ? txt : "");
+                newBlock->u.txt.max = strdup(txt ? txt : "");
+            }
+            else
+            {
+                double val = sqlite3_column_double(stmt, 1);
+                newBlock->u.num.min = val;
+                newBlock->u.num.max = val;
+            }
+
+            v->total_blocks++;
+            v->last_block_size = 1;
+        }
+
+        v->last_indexed_rowid = rowid;
+    }
+
+    sqlite3_finalize(stmt);
+
+    if (new_rows == 0)
+    {
+        printf("[BRIN] No new rows detected.\n");
+    }
+    else
+    {
+        printf("[BRIN] Incremental update processed %d new rows.\n",
+               new_rows);
+    }
+
+    printf("[BRIN] Updated last indexed rowid : %lld\n",
+           v->last_indexed_rowid);
+    printf("[BRIN] Updated total blocks       : %d\n",
+           v->total_blocks);
+    printf("[BRIN] Updated last block size    : %d\n",
+           v->last_block_size);
+
+    printf("[BRIN] ===== INCREMENTAL UPDATE END =====\n\n");
+
     return SQLITE_OK;
 }
 
@@ -493,9 +707,14 @@ static int brinFilter(
 
     /* Lazy index build */
     if (!v->index_ready) {
-        printf("[BRIN] building BRIN index (lazy)\n");
-        brinBuildIndex(v);
+      printf("[BRIN] xFilter: BRIN build\n");
+      brinBuildIndex(v);
     }
+    else {
+      printf("[BRIN] xFilter: BRIN update\n");
+      brinIncrementalUpdate(v);
+    }
+
 
     c->blocks  = v->ranges;
     c->nBlocks = v->total_blocks;
