@@ -47,8 +47,6 @@ const char* get_affinity(const char *declared_type) {
         type[i] = toupper(type[i]);
     }
 
-    fprintf(stdout, "->type %s\n", type);
-
     if (strstr(type, "INT")) return "INTEGER";
     if (strstr(type, "CHAR") || strstr(type, "CLOB")
                              || strstr(type, "TEXT")) return "TEXT";
@@ -110,11 +108,11 @@ static int brinConnect(
 ){
   (void)pAux; (void)pzErr;
   if (argc < 5) {
-    fprintf(stderr, "brinConnect: not enough args (argc=%d)\n", argc);
+    //fprintf(stderr, "brinConnect: not enough args (argc=%d)\n", argc);
     return SQLITE_ERROR;
   }
 
-  fprintf(stdout, "-> Connect / xCreate\n");
+  //fprintf(stdout, "[BRIN] Connect / xCreate\n");
 
   BrinVtab *v = (BrinVtab*)sqlite3_malloc(sizeof(BrinVtab));
   if (v == NULL) return SQLITE_NOMEM;
@@ -203,6 +201,9 @@ static int brinConnect(
   }
 
   *ppVtab = (sqlite3_vtab*)v;
+
+  brinBuildIndex(v);
+
   return SQLITE_OK;
 }
 
@@ -228,6 +229,45 @@ static void brinDumpRange(const BrinRange *r, int idx) {
 }
 
 
+/* -------------------------------------------
+ * get_max_rowid:
+ * Returns the maximum rowid in the base table.
+ * If table is empty, returns 0.
+ * ------------------------------------------- */
+static sqlite3_int64 get_max_rowid(BrinVtab *v)
+{
+    sqlite3_stmt *stmt = NULL;
+    sqlite3_int64 max_rowid = 0;
+
+    char sql[256];
+
+    /* Build safe SQL */
+    snprintf(sql, sizeof(sql),
+             "SELECT MAX(rowid) FROM %s;", v->table);
+
+    int rc = sqlite3_prepare_v2(v->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        printf("[BRIN] get_max_rowid: prepare failed: %s\n",
+               sqlite3_errmsg(v->db));
+        return v->last_indexed_rowid;  /* fallback safely */
+    }
+
+    rc = sqlite3_step(stmt);
+
+    if (rc == SQLITE_ROW) {
+        if (sqlite3_column_type(stmt, 0) != SQLITE_NULL) {
+            max_rowid = sqlite3_column_int64(stmt, 0);
+        } else {
+            max_rowid = 0; /* table empty */
+        }
+    }
+
+    sqlite3_finalize(stmt);
+
+    return max_rowid;
+}
+
+
 /* --------------------------------------------------------
  * brinBuildIndex
  * Builds full in-memory BRIN index by scanning base table.
@@ -239,10 +279,10 @@ static int brinBuildIndex(BrinVtab *v)
         return SQLITE_ERROR;
 
     printf("\n[BRIN] ===== FULL BUILD START =====\n");
-    printf("[BRIN] Table      : %s\n", v->table);
-    printf("[BRIN] Column     : %s\n", v->column);
-    printf("[BRIN] Block size : %d\n", v->block_size);
-    printf("[BRIN] Affinity   : %d\n\n", v->affinity);
+    //printf("[BRIN] Table      : %s\n", v->table);
+    //printf("[BRIN] Column     : %s\n", v->column);
+    //printf("[BRIN] Block size : %d\n", v->block_size);
+    //printf("[BRIN] Affinity   : %d\n\n", v->affinity);
 
     /* ------------------------------------------
      * Free previous index if exists
@@ -301,7 +341,7 @@ static int brinBuildIndex(BrinVtab *v)
     memset(&current, 0, sizeof(BrinRange));
     current.type = v->affinity;
 
-    printf("[BRIN] Scanning table...\n");
+    //printf("[BRIN] Scanning table...\n");
 
     /* ------------------------------------------
      * Main scan loop
@@ -318,7 +358,7 @@ static int brinBuildIndex(BrinVtab *v)
 
         if (block_pos == 0)
         {
-            printf("[BRIN] Starting new block at rowid=%lld\n", rowid);
+            //printf("[BRIN] Starting new block at rowid=%lld\n", rowid);
 
             current.start_rowid = rowid;
             current.end_rowid = rowid;
@@ -377,12 +417,13 @@ static int brinBuildIndex(BrinVtab *v)
 
             v->ranges[v->total_blocks++] = current;
 
+            /*
             printf("[BRIN] Block %d stored "
                    "(rowid %lld - %lld)\n",
                    v->total_blocks - 1,
                    current.start_rowid,
                    current.end_rowid);
-
+            */
             memset(&current, 0, sizeof(BrinRange));
             current.type = v->affinity;
             block_pos = 0;
@@ -402,13 +443,13 @@ static int brinBuildIndex(BrinVtab *v)
         }
 
         v->ranges[v->total_blocks++] = current;
-
+/*
         printf("[BRIN] Partial block %d stored "
                "(rowid %lld - %lld, size=%d)\n",
                v->total_blocks - 1,
                current.start_rowid,
                current.end_rowid,
-               block_pos);
+               block_pos); */
     }
 
     sqlite3_finalize(stmt);
@@ -419,7 +460,7 @@ static int brinBuildIndex(BrinVtab *v)
     v->last_indexed_rowid = last_rowid_seen;
     v->last_block_size = block_pos;
     v->index_ready = 1;
-
+/*
     printf("\n[BRIN] ===== FULL BUILD DONE =====\n");
     printf("[BRIN] Total blocks         : %d\n", v->total_blocks);
     printf("[BRIN] Last indexed rowid   : %lld\n",
@@ -427,7 +468,7 @@ static int brinBuildIndex(BrinVtab *v)
     printf("[BRIN] Last block size      : %d\n",
            v->last_block_size);
     printf("[BRIN] =================================\n\n");
-
+*/
     return SQLITE_OK;
 }
 
@@ -578,37 +619,43 @@ static int brinIncrementalUpdate(BrinVtab *v)
 }
 
 
-/* ---------------------------
- * xBestIndex
- * - inspects available constraints and tells sqlite which ones we'll use.
- * - we use idxNum bit0 => lower bound (>=), bit1 => upper bound (<=).
- * - set aConstraintUsage[].argvIndex and .omit where appropriate.
- * - set estimatedCost / estimatedRows to influence planner to use BRIN.
- * --------------------------- */
-static int brinBestIndex(sqlite3_vtab *pVtab, sqlite3_index_info *pIdxInfo) {
+/* --------------------------------------------------
+ * xBestIndex - Planner Integration
+ * -------------------------------------------------- */
+static int brinBestIndex(sqlite3_vtab *pVtab,
+                         sqlite3_index_info *pIdxInfo)
+{
     BrinVtab *v = (BrinVtab*)pVtab;
 
-    printf("[BRIN] xBestIndex invoked\n");
+    printf("\n[BRIN] ===== xBestIndex START =====\n");
 
     int minTerm = -1;
     int maxTerm = -1;
 
-    /* scan constraints */
+    /* Scan available constraints */
     for (int i = 0; i < pIdxInfo->nConstraint; i++) {
+
         const struct sqlite3_index_constraint *c =
             &pIdxInfo->aConstraint[i];
+
+        printf("[BRIN] Constraint %d usable=%d column=%d op=%d\n",
+               i, c->usable, c->iColumn, c->op);
 
         if (!c->usable)
             continue;
 
-        /* column 0 = min, column 1 = max */
-        if (c->iColumn == 0 && c->op == SQLITE_INDEX_CONSTRAINT_LE) {
+        /* Column 0 = min, Column 1 = max */
+        if (c->iColumn == 0 &&
+            c->op == SQLITE_INDEX_CONSTRAINT_LE)
+        {
             minTerm = i;
-            printf("[BRIN]  using constraint LE on column min\n");
+            printf("[BRIN] -> Using min <= ? constraint\n");
         }
-        else if (c->iColumn == 1 && c->op == SQLITE_INDEX_CONSTRAINT_GE) {
+        else if (c->iColumn == 1 &&
+                 c->op == SQLITE_INDEX_CONSTRAINT_GE)
+        {
             maxTerm = i;
-            printf("[BRIN]  using constraint GE on column max\n");
+            printf("[BRIN] -> Using max >= ? constraint\n");
         }
     }
 
@@ -624,29 +671,68 @@ static int brinBestIndex(sqlite3_vtab *pVtab, sqlite3_index_info *pIdxInfo) {
         pIdxInfo->aConstraintUsage[maxTerm].omit = 1;
     }
 
-    /* tell xFilter what we recognized */
-    if (minTerm >= 0 && maxTerm >= 0) {
-        pIdxInfo->idxNum = 3; /* min + max */
-    } else if (minTerm >= 0) {
-        pIdxInfo->idxNum = 1; /* min only */
-    } else if (maxTerm >= 0) {
-        pIdxInfo->idxNum = 2; /* max only */
-    } else {
-        pIdxInfo->idxNum = 0; /* full scan */
+    /* Encode strategy */
+    if (minTerm >= 0 && maxTerm >= 0)
+        pIdxInfo->idxNum = 3;
+    else if (minTerm >= 0)
+        pIdxInfo->idxNum = 1;
+    else if (maxTerm >= 0)
+        pIdxInfo->idxNum = 2;
+    else
+        pIdxInfo->idxNum = 0;
+
+    /* ================================
+       COST MODEL (THIS IS CRITICAL)
+       ================================ */
+
+    int blocks = v->total_blocks > 0 ? v->total_blocks : 100;
+
+    /*
+       If both bounds exist, this is selective.
+       We estimate only ~5% of blocks touched.
+    */
+    if (pIdxInfo->idxNum == 3) {
+
+        int estimated_blocks = blocks / 20;
+        if (estimated_blocks < 1)
+            estimated_blocks = 1;
+
+        pIdxInfo->estimatedRows = estimated_blocks;
+
+        /* Make cost very attractive */
+        pIdxInfo->estimatedCost = (double)estimated_blocks;
+
+        printf("[BRIN] Strategy: FULL RANGE\n");
+        printf("[BRIN] Estimated blocks touched: %d\n",
+               estimated_blocks);
+    }
+    else {
+        /* Worst case full scan */
+        pIdxInfo->estimatedRows = blocks;
+        pIdxInfo->estimatedCost = (double)(blocks * 10);
+
+        printf("[BRIN] Strategy: FULL SCAN\n");
     }
 
-    /* cost model: fewer blocks = cheaper */
-    int blocks = v->total_blocks > 0 ? v->total_blocks : 1000;
+    /*
+       Encourage planner to choose this as outer loop.
+       Lower cost => higher priority.
+    */
+    if (pIdxInfo->estimatedCost < 10)
+        pIdxInfo->estimatedCost = 1.0;
 
-    pIdxInfo->estimatedRows = blocks;
-    pIdxInfo->estimatedCost = (double)blocks;
+    /* Optional: hint that ordering is preserved */
+    pIdxInfo->orderByConsumed = 0;
 
-    printf("[BRIN] xBestIndex chosen idxNum=%d estimatedCost=%.2f blocks=%d\n",
-           pIdxInfo->idxNum, pIdxInfo->estimatedCost, blocks);
+    printf("[BRIN] idxNum=%d cost=%.2f rows=%lld\n",
+           pIdxInfo->idxNum,
+           pIdxInfo->estimatedCost,
+           pIdxInfo->estimatedRows);
+
+    printf("[BRIN] ===== xBestIndex END =====\n\n");
 
     return SQLITE_OK;
 }
-
 
 /* ---------------------------
  * xOpen / xClose
@@ -693,7 +779,7 @@ static int brinFilter(
     BrinCursor *c = (BrinCursor*)cur;
     BrinVtab   *v = (BrinVtab*)cur->pVtab;
 
-    printf("[BRIN] xFilter invoked idxNum=%d argc=%d\n", idxNum, argc);
+    //printf("[BRIN] xFilter invoked idxNum=%d argc=%d\n", idxNum, argc);
 
     /* Default: do not use BRIN */
     c->useBrin = 0;
@@ -710,11 +796,22 @@ static int brinFilter(
       printf("[BRIN] xFilter: BRIN build\n");
       brinBuildIndex(v);
     }
+/*
     else {
       printf("[BRIN] xFilter: BRIN update\n");
-      brinIncrementalUpdate(v);
-    }
 
+      sqlite3_int64 current_max = get_max_rowid(v);
+
+      if (current_max > v->last_indexed_rowid) {
+        printf("[BRIN] New rows detected. Updating...\n");
+        brinIncrementalUpdate(v);
+      } else {
+        printf("[BRIN] No new rows. Skipping update.\n");
+      }
+
+
+    }
+*/
 
     c->blocks  = v->ranges;
     c->nBlocks = v->total_blocks;
@@ -733,8 +830,8 @@ static int brinFilter(
         c->low  = (a < b) ? a : b;
         c->high = (a < b) ? b : a;
 
-        printf("[BRIN] search bounds NUM [%lld .. %lld]\n",
-               c->low, c->high);
+        //printf("[BRIN] search bounds NUM [%lld .. %lld]\n",
+        //       c->low, c->high);
 
         /* Find first matching block */
         while (c->current_block < c->nBlocks) {
@@ -744,8 +841,8 @@ static int brinFilter(
                 r->u.num.min <= c->high) {
                 c->useBrin = 1;
                 c->eof = 0;
-                printf("[BRIN] first matching block=%d\n",
-                       c->current_block);
+                //printf("[BRIN] first matching block=%d\n",
+                //       c->current_block);
                 return SQLITE_OK;
             }
 
