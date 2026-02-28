@@ -62,17 +62,14 @@ typedef struct {
 typedef struct {
     sqlite3_vtab_cursor base;
 
-    int useBrin;
-
-    /* Precomputed matching blocks */
-    int *matching_blocks;
-    int matching_count;
-    int pos;  // current position inside matching_blocks
+    BrinVtab *v;
 
     sqlite3_int64 low;
     sqlite3_int64 high;
 
-    BrinVtab *v;
+    int start_block;
+    int end_block;
+    int current_block;
 
     int eof;
 } BrinCursor;
@@ -152,7 +149,7 @@ static int brinIncrementalUpdate(BrinVtab *v)
 
     snprintf(sql, sizeof(sql),
         "SELECT rowid, %s FROM %s "
-        "WHERE rowid > ? ORDER BY rowid;",
+        "WHERE rowid > ?;",
         v->column, v->table);
 
     sqlite3_stmt *stmt = NULL;
@@ -279,7 +276,7 @@ static int brinBuildIndex(BrinVtab *v)
      * ------------------------------------------ */
     char sql[1024];
     snprintf(sql, sizeof(sql),
-             "SELECT rowid, %s FROM %s ORDER BY rowid;",
+             "SELECT rowid, %s FROM %s;",
              v->column, v->table);
 
     sqlite3_stmt *stmt = NULL;
@@ -761,34 +758,22 @@ static int brinBestIndex(sqlite3_vtab *pVtab,
  * --------------------------- */
 static int brinOpen(
     sqlite3_vtab *pVtab,
-    sqlite3_vtab_cursor **ppCursor
-){
+    sqlite3_vtab_cursor **ppCursor)
+{
     BrinCursor *c = calloc(1, sizeof(BrinCursor));
     if (!c) return SQLITE_NOMEM;
 
     c->v = (BrinVtab*)pVtab;
-    c->eof = 0;
-    c->useBrin = 0;
+    c->eof = 1;
 
     *ppCursor = &c->base;
-
-    //printf("[BRIN] xOpen\n");
-
     return SQLITE_OK;
 }
 
 
 static int brinClose(sqlite3_vtab_cursor *cur)
 {
-    BrinCursor *c = (BrinCursor*)cur;
-
-    if (c->matching_blocks)
-        free(c->matching_blocks);
-
-    free(c);
-
-    //printf("[BRIN] xClose\n");
-
+    free(cur);
     return SQLITE_OK;
 }
 
@@ -803,64 +788,81 @@ static int brinFilter(
     BrinCursor *c = (BrinCursor*)cur;
     BrinVtab   *v = c->v;
 
-    //printf("\n[BRIN] ===== xFilter START =====\n");
-    //printf("[BRIN] idxNum=%d argc=%d\n", idxNum, argc);
-
     c->eof = 1;
-    c->useBrin = 0;
 
-    if (idxNum != 3 || argc != 2) {
-        //printf("[BRIN] Plan not supported\n");
+    /* Only support full range plan */
+    if (idxNum != 3 || argc != 2)
         return SQLITE_OK;
-    }
 
-    /* Incremental update (O(Δ)) */
+    /* Incremental update (cheap if no new rows) */
     brinIncrementalUpdate(v);
+
+    if (v->total_blocks == 0)
+        return SQLITE_OK;
 
     sqlite3_int64 a = sqlite3_value_int64(argv[0]);
     sqlite3_int64 b = sqlite3_value_int64(argv[1]);
 
-    c->low  = (a<b)?a:b;
-    c->high = (a<b)?b:a;
+    c->low  = (a < b) ? a : b;
+    c->high = (a < b) ? b : a;
 
-    //printf("[BRIN] Search bounds [%lld .. %lld]\n",
-    //       c->low, c->high);
+    int left, right, mid;
 
-    /* Allocate array for matching blocks */
-    c->matching_blocks =
-        malloc(v->total_blocks * sizeof(int));
-    c->matching_count = 0;
+    /* --------------------------------------------
+       Binary search for FIRST block where
+          r->max >= low
+       -------------------------------------------- */
+    int start = v->total_blocks;
 
-    for (int i = 0; i < v->total_blocks; i++)
-    {
-        BrinRange *r = &v->ranges[i];
+    left = 0;
+    right = v->total_blocks - 1;
 
-        if (r->u.num.max >= c->low &&
-            r->u.num.min <= c->high)
-        {
-            c->matching_blocks[c->matching_count++] = i;
+    while (left <= right) {
+        mid = (left + right) / 2;
+
+        BrinRange *r = &v->ranges[mid];
+
+        if (r->u.num.max >= c->low) {
+            start = mid;
+            right = mid - 1;
+        } else {
+            left = mid + 1;
         }
     }
 
-    //printf("[BRIN] Matching blocks found: %d\n",
-    //       c->matching_count);
+    if (start == v->total_blocks)
+        return SQLITE_OK;  /* no possible match */
 
-    if (c->matching_count == 0)
-    {
-        //printf("[BRIN] No blocks match\n");
-        return SQLITE_OK;
+    /* --------------------------------------------
+       Binary search for LAST block where
+          r->min <= high
+       -------------------------------------------- */
+    int end = -1;
+
+    left = 0;
+    right = v->total_blocks - 1;
+
+    while (left <= right) {
+        mid = (left + right) / 2;
+
+        BrinRange *r = &v->ranges[mid];
+
+        if (r->u.num.min <= c->high) {
+            end = mid;
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
     }
 
-    c->pos = 0;
+    if (end < start)
+        return SQLITE_OK;
+
+    c->start_block   = start;
+    c->end_block     = end;
+    c->current_block = start;
     c->eof = 0;
-    c->useBrin = 1;
 
-    /*
-    printf("[BRIN] First block = %d\n",
-           c->matching_blocks[0]);
-
-    printf("[BRIN] ===== xFilter END =====\n\n");
-    */
     return SQLITE_OK;
 }
 
@@ -872,9 +874,9 @@ static int brinNext(sqlite3_vtab_cursor *cur)
 {
     BrinCursor *c = (BrinCursor*)cur;
 
-    c->pos++;
+    c->current_block++;
 
-    if (c->pos >= c->matching_count)
+    if (c->current_block > c->end_block)
         c->eof = 1;
 
     return SQLITE_OK;
@@ -899,8 +901,7 @@ static int brinColumn(
         return SQLITE_OK;
     }
 
-    BrinRange *r =
-        &c->v->ranges[c->matching_blocks[c->pos]];
+    BrinRange *r = &c->v->ranges[c->current_block];
 
     switch (col)
     {
@@ -921,10 +922,12 @@ static int brinColumn(
     return SQLITE_OK;
 }
 
-
-static int brinRowid(sqlite3_vtab_cursor *cur, sqlite3_int64 *pRowid) {
+static int brinRowid(
+    sqlite3_vtab_cursor *cur,
+    sqlite3_int64 *pRowid)
+{
     BrinCursor *c = (BrinCursor*)cur;
-    *pRowid = c->pos;
+    *pRowid = c->current_block;
     return SQLITE_OK;
 }
 
