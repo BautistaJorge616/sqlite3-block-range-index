@@ -5,6 +5,12 @@
 #include <ctype.h>
 #include <time.h>   // Needed for struct tm and time conversion
 
+#ifdef DEBUG
+    #define DEBUG_PRINT(...) printf(__VA_ARGS__)
+#else
+    #define DEBUG_PRINT(...)
+#endif
+
 SQLITE_EXTENSION_INIT1
 
 typedef enum {
@@ -78,11 +84,15 @@ typedef struct {
 const char* get_affinity(const char *declared_type) {
     if (!declared_type) return NULL;
 
+    DEBUG_PRINT("[BRIN] get_affinity()\n");
+
     char type[64];
     snprintf(type, sizeof(type), "%s", declared_type);
     for (int i = 0; type[i]; i++) {
         type[i] = toupper(type[i]);
     }
+
+    DEBUG_PRINT("type:%s\n", type);
 
     if (strstr(type, "INT")) return "INTEGER";
     if (strstr(type, "CHAR") || strstr(type, "CLOB")
@@ -103,6 +113,9 @@ const char* get_affinity(const char *declared_type) {
  * ------------------------------------------- */
 static sqlite3_int64 get_max_rowid(BrinVtab *v)
 {
+
+    DEBUG_PRINT("[BRIN] get_max_rowid()\n");
+
     sqlite3_stmt *stmt = NULL;
     sqlite3_int64 max_rowid = 0;
 
@@ -114,8 +127,8 @@ static sqlite3_int64 get_max_rowid(BrinVtab *v)
 
     int rc = sqlite3_prepare_v2(v->db, sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
-        //printf("[BRIN] get_max_rowid: prepare failed: %s\n",
-        //       sqlite3_errmsg(v->db));
+        printf("get_max_rowid: prepare failed: %s\n",
+               sqlite3_errmsg(v->db));
         return v->last_indexed_rowid;  /* fallback safely */
     }
 
@@ -131,6 +144,8 @@ static sqlite3_int64 get_max_rowid(BrinVtab *v)
 
     sqlite3_finalize(stmt);
 
+    DEBUG_PRINT("max_rowid:%lld\n",max_rowid);
+
     return max_rowid;
 }
 
@@ -144,6 +159,8 @@ static int brinIncrementalUpdate(BrinVtab *v)
 {
     if (!v || !v->db || !v->index_ready)
         return SQLITE_OK;
+
+    DEBUG_PRINT("[BRIN] brinIncrementalUpdate()\n");
 
     char sql[512];
 
@@ -227,6 +244,8 @@ static int brinIncrementalUpdate(BrinVtab *v)
 
     sqlite3_finalize(stmt);
 
+    DEBUG_PRINT("found_new_rows:%d\n",found_new_rows);
+
     /* If no rows found → O(1) fast exit */
     if (!found_new_rows)
         return SQLITE_OK;
@@ -244,19 +263,18 @@ static int brinBuildIndex(BrinVtab *v)
     if (!v || !v->db)
         return SQLITE_ERROR;
 
-    //printf("\n[BRIN] ===== FULL BUILD START =====\n");
-    //printf("[BRIN] Table      : %s\n", v->table);
-    //printf("[BRIN] Column     : %s\n", v->column);
-    //printf("[BRIN] Block size : %d\n", v->block_size);
-    //printf("[BRIN] Affinity   : %d\n\n", v->affinity);
+
+    DEBUG_PRINT("[BRIN] brinBuildIndex() \n");
+    DEBUG_PRINT("Table      : %s\n", v->table);
+    DEBUG_PRINT("Column     : %s\n", v->column);
+    DEBUG_PRINT("Block size : %d\n", v->block_size);
+    DEBUG_PRINT("Affinity   : %d\n\n", v->affinity);
 
     /* ------------------------------------------
      * Free previous index if exists
      * ------------------------------------------ */
     if (v->ranges)
     {
-        //printf("[BRIN] Cleaning previous ranges...\n");
-
         if (v->affinity == BRIN_TYPE_TEXT)
         {
             for (int i = 0; i < v->total_blocks; i++)
@@ -284,8 +302,8 @@ static int brinBuildIndex(BrinVtab *v)
 
     if (rc != SQLITE_OK)
     {
-        //printf("[BRIN] ERROR preparing scan: %s\n",
-        //       sqlite3_errmsg(v->db));
+        printf("[BRIN] ERROR preparing scan: %s\n",
+               sqlite3_errmsg(v->db));
         return rc;
     }
 
@@ -307,8 +325,6 @@ static int brinBuildIndex(BrinVtab *v)
     memset(&current, 0, sizeof(BrinRange));
     current.type = v->affinity;
 
-    //printf("[BRIN] Scanning table...\n");
-
     /* ------------------------------------------
      * Main scan loop
      * ------------------------------------------ */
@@ -324,7 +340,7 @@ static int brinBuildIndex(BrinVtab *v)
 
         if (block_pos == 0)
         {
-            //printf("[BRIN] Starting new block at rowid=%lld\n", rowid);
+            DEBUG_PRINT("new block at rowid=%lld\n", rowid);
 
             current.start_rowid = rowid;
             current.end_rowid = rowid;
@@ -383,13 +399,12 @@ static int brinBuildIndex(BrinVtab *v)
 
             v->ranges[v->total_blocks++] = current;
 
-            /*
-            printf("[BRIN] Block %d stored "
+                   DEBUG_PRINT("Block %d stored "
                    "(rowid %lld - %lld)\n",
                    v->total_blocks - 1,
                    current.start_rowid,
                    current.end_rowid);
-            */
+
             memset(&current, 0, sizeof(BrinRange));
             current.type = v->affinity;
             block_pos = 0;
@@ -409,13 +424,13 @@ static int brinBuildIndex(BrinVtab *v)
         }
 
         v->ranges[v->total_blocks++] = current;
-/*
-        printf("[BRIN] Partial block %d stored "
+
+        DEBUG_PRINT("Partial block %d stored "
                "(rowid %lld - %lld, size=%d)\n",
                v->total_blocks - 1,
                current.start_rowid,
                current.end_rowid,
-               block_pos); */
+               block_pos);
     }
 
     sqlite3_finalize(stmt);
@@ -426,15 +441,13 @@ static int brinBuildIndex(BrinVtab *v)
     v->last_indexed_rowid = last_rowid_seen;
     v->last_block_size = block_pos;
     v->index_ready = 1;
-/*
-    printf("\n[BRIN] ===== FULL BUILD DONE =====\n");
-    printf("[BRIN] Total blocks         : %d\n", v->total_blocks);
-    printf("[BRIN] Last indexed rowid   : %lld\n",
+
+    DEBUG_PRINT("Total blocks         : %d\n", v->total_blocks);
+    DEBUG_PRINT("Last indexed rowid   : %lld\n",
            v->last_indexed_rowid);
-    printf("[BRIN] Last block size      : %d\n",
+    DEBUG_PRINT("Last block size      : %d\n",
            v->last_block_size);
-    printf("[BRIN] =================================\n\n");
-*/
+
     return SQLITE_OK;
 }
 
@@ -454,7 +467,7 @@ static int brinConnect(
     return SQLITE_ERROR;
   }
 
-  //fprintf(stdout, "[BRIN] Connect / xCreate\n");
+  DEBUG_PRINT("[BRIN] brinConnect()\n");
 
   BrinVtab *v = (BrinVtab*)sqlite3_malloc(sizeof(BrinVtab));
   if (v == NULL) return SQLITE_NOMEM;
@@ -494,7 +507,6 @@ static int brinConnect(
     return rc;
   }
 
-  // ToDo: We should add a test to validate this
   const char *affinity = get_affinity(dataType);
 
   if ( !affinity ) {
@@ -544,15 +556,10 @@ static int brinConnect(
 
   *ppVtab = (sqlite3_vtab*)v;
 
-  //printf("\n[BRIN] ===== CREATE PHASE =====\n");
-
   /* FULL BUILD at creation */
   rc = brinBuildIndex(v);
   if (rc != SQLITE_OK)
       return rc;
-
-  //printf("[BRIN] ===== CREATE COMPLETE =====\n");
-
 
   return SQLITE_OK;
 }
@@ -585,8 +592,8 @@ static int brinBestIndex(sqlite3_vtab *pVtab,
 {
     BrinVtab *v = (BrinVtab*)pVtab;
 
-    //printf("\n[BRIN] ===== xBestIndex START =====\n");
-    //printf("[BRIN] total_blocks currently known: %d\n", v->total_blocks);
+    DEBUG_PRINT("[BRIN] brinBestIndex()\n");
+    DEBUG_PRINT("total_blocks currently known: %d\n", v->total_blocks);
 
     int minTerm = -1;
     int maxTerm = -1;
@@ -606,11 +613,11 @@ static int brinBestIndex(sqlite3_vtab *pVtab,
         const struct sqlite3_index_constraint *c =
             &pIdxInfo->aConstraint[i];
 
-        //printf("[BRIN] Constraint %d usable=%d column=%d op=%d\n",
-        //       i, c->usable, c->iColumn, c->op);
+        DEBUG_PRINT("Constraint %d usable=%d column=%d op=%d\n",
+                     i, c->usable, c->iColumn, c->op);
 
         if (!c->usable) {
-            //printf("[BRIN] -> Skipping (not usable in this join position)\n");
+            DEBUG_PRINT("Skipping (not usable in this join position)\n");
             continue;
         }
 
@@ -619,13 +626,13 @@ static int brinBestIndex(sqlite3_vtab *pVtab,
             c->op == SQLITE_INDEX_CONSTRAINT_LE)
         {
             minTerm = i;
-            //printf("[BRIN] -> Candidate: min <= ? detected\n");
+            DEBUG_PRINT("Candidate: min <= ? detected\n");
         }
         else if (c->iColumn == 1 &&
                  c->op == SQLITE_INDEX_CONSTRAINT_GE)
         {
             maxTerm = i;
-            //printf("[BRIN] -> Candidate: max >= ? detected\n");
+            DEBUG_PRINT("Candidate: max >= ? detected\n");
         }
     }
 
@@ -643,13 +650,13 @@ static int brinBestIndex(sqlite3_vtab *pVtab,
     if (minTerm >= 0) {
         pIdxInfo->aConstraintUsage[minTerm].argvIndex = argvIdx++;
         pIdxInfo->aConstraintUsage[minTerm].omit = 1;
-        //printf("[BRIN] -> Using min <= ? in index\n");
+        DEBUG_PRINT("Using min <= ? in index\n");
     }
 
     if (maxTerm >= 0) {
         pIdxInfo->aConstraintUsage[maxTerm].argvIndex = argvIdx++;
         pIdxInfo->aConstraintUsage[maxTerm].omit = 1;
-        //printf("[BRIN] -> Using max >= ? in index\n");
+        DEBUG_PRINT("Using max >= ? in index\n");
     }
 
     /* --------------------------------------------------
@@ -666,19 +673,19 @@ static int brinBestIndex(sqlite3_vtab *pVtab,
      * -------------------------------------------------- */
     if (minTerm >= 0 && maxTerm >= 0) {
         pIdxInfo->idxNum = 3;
-        //printf("[BRIN] Strategy selected: FULL RANGE\n");
+        DEBUG_PRINT("Strategy selected: FULL RANGE\n");
     }
     else if (minTerm >= 0) {
         pIdxInfo->idxNum = 1;
-        //printf("[BRIN] Strategy selected: LOWER BOUND only\n");
+        DEBUG_PRINT("Strategy selected: LOWER BOUND only\n");
     }
     else if (maxTerm >= 0) {
         pIdxInfo->idxNum = 2;
-        //printf("[BRIN] Strategy selected: UPPER BOUND only\n");
+        DEBUG_PRINT("Strategy selected: UPPER BOUND only\n");
     }
     else {
         pIdxInfo->idxNum = 0;
-        //printf("[BRIN] Strategy selected: FULL SCAN\n");
+        DEBUG_PRINT("Strategy selected: FULL SCAN\n");
     }
 
     /* --------------------------------------------------
@@ -700,7 +707,7 @@ static int brinBestIndex(sqlite3_vtab *pVtab,
         /* Edge case: empty index */
         pIdxInfo->estimatedRows = 0;
         pIdxInfo->estimatedCost = 0;
-        //printf("[BRIN] No blocks available\n");
+        DEBUG_PRINT("No blocks available\n");
     }
     else if (pIdxInfo->idxNum == 3) {
         /* Full range predicate: assume selective */
@@ -712,15 +719,15 @@ static int brinBestIndex(sqlite3_vtab *pVtab,
         pIdxInfo->estimatedRows = estimated_blocks;
         pIdxInfo->estimatedCost = (double)estimated_blocks;
 
-        //printf("[BRIN] Estimated blocks touched: %d of %d\n",
-        //       estimated_blocks, blocks);
+        DEBUG_PRINT("Estimated blocks touched: %d of %d\n",
+                     estimated_blocks, blocks);
     }
     else {
         /* Non-selective or unsupported pattern */
         pIdxInfo->estimatedRows = blocks;
         pIdxInfo->estimatedCost = (double)(blocks * 10);
 
-        //printf("[BRIN] Non-selective → high cost full scan\n");
+        DEBUG_PRINT("Non-selective → high cost full scan\n");
     }
 
     /* --------------------------------------------------
@@ -738,17 +745,16 @@ static int brinBestIndex(sqlite3_vtab *pVtab,
             pIdxInfo->aOrderBy[0].desc == 0)        /* ASC */
         {
             pIdxInfo->orderByConsumed = 1;
-            //printf("[BRIN] ORDER BY start_rowid ASC satisfied by index\n");
+            DEBUG_PRINT("ORDER BY start_rowid ASC satisfied by index\n");
         }
     }
 
-    /* printf("[BRIN] Final decision: idxNum=%d cost=%.2f rows=%lld\n",
-           pIdxInfo->idxNum,
-           pIdxInfo->estimatedCost,
-           pIdxInfo->estimatedRows);
+    DEBUG_PRINT("Final decision: idxNum=%d cost=%.2f rows=%lld\n",
+                 pIdxInfo->idxNum,
+                 pIdxInfo->estimatedCost,
+                 pIdxInfo->estimatedRows);
 
-    printf("[BRIN] ===== xBestIndex END =====\n\n");
-    */
+
     return SQLITE_OK;
 }
 
@@ -760,6 +766,9 @@ static int brinOpen(
     sqlite3_vtab *pVtab,
     sqlite3_vtab_cursor **ppCursor)
 {
+
+    DEBUG_PRINT("[BRIN] brinOpen()\n");
+
     BrinCursor *c = calloc(1, sizeof(BrinCursor));
     if (!c) return SQLITE_NOMEM;
 
@@ -773,6 +782,9 @@ static int brinOpen(
 
 static int brinClose(sqlite3_vtab_cursor *cur)
 {
+
+    DEBUG_PRINT("[BRIN] brinClose()\n");
+
     free(cur);
     return SQLITE_OK;
 }
@@ -785,6 +797,9 @@ static int brinFilter(
     int argc,
     sqlite3_value **argv)
 {
+
+    DEBUG_PRINT("[BRIN] brinFilter()\n");
+
     BrinCursor *c = (BrinCursor*)cur;
     BrinVtab   *v = c->v;
 
@@ -872,6 +887,9 @@ static int brinFilter(
  * --------------------------- */
 static int brinNext(sqlite3_vtab_cursor *cur)
 {
+
+    DEBUG_PRINT("[BRIN] brinNext()\n");
+
     BrinCursor *c = (BrinCursor*)cur;
 
     c->current_block++;
@@ -884,6 +902,7 @@ static int brinNext(sqlite3_vtab_cursor *cur)
 
 
 static int brinEof(sqlite3_vtab_cursor *cur) {
+    DEBUG_PRINT("[BRIN] brinEof()\n");
     BrinCursor *c = (BrinCursor*)cur;
     return c->eof;
 }
@@ -894,6 +913,9 @@ static int brinColumn(
     sqlite3_context *ctx,
     int col)
 {
+
+    DEBUG_PRINT("[BRIN] brinColumn()\n");
+
     BrinCursor *c = (BrinCursor*)cur;
 
     if (c->eof) {
@@ -926,6 +948,7 @@ static int brinRowid(
     sqlite3_vtab_cursor *cur,
     sqlite3_int64 *pRowid)
 {
+    DEBUG_PRINT("[BRIN] brinRowid()\n");
     BrinCursor *c = (BrinCursor*)cur;
     *pRowid = c->current_block;
     return SQLITE_OK;
@@ -937,7 +960,7 @@ static int brinRowid(
  * --------------------------- */
 static int brinDisconnect(sqlite3_vtab *pVTab){
     BrinVtab *v = (BrinVtab*)pVTab;
-    //printf("[BRIN] xDisconnect\n");
+    DEBUG_PRINT("[BRIN] brinDisconnect()\n");
 
     if (v) {
         if (v->ranges) {
@@ -957,7 +980,7 @@ static int brinDisconnect(sqlite3_vtab *pVTab){
 }
 
 static int brinDestroy(sqlite3_vtab *pVTab){
-    //printf("[BRIN] xDestroy\n");
+    DEBUG_PRINT("[BRIN] brinDestroy()\n");
     return brinDisconnect(pVTab);
 }
 

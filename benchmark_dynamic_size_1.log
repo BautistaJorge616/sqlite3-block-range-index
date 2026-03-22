@@ -1,0 +1,1008 @@
+
+=====================================
+BLOCK SIZE = 1000 (0.0100% of table)
+=====================================
+BRIN build time: 0.534217 sec
+BTree build time: 1.718394 sec
+
+--- Query size = 10 (0.0001%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000031 | BRIN: 0.000110 | Speedup: 0.28x
+
+--- Query size = 50 (0.0005%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000034 | BRIN: 0.000112 | Speedup: 0.30x
+
+--- Query size = 100 (0.0010%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000049 | BRIN: 0.000112 | Speedup: 0.44x
+
+--- Query size = 500 (0.0050%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000118 | BRIN: 0.000167 | Speedup: 0.71x
+
+--- Query size = 1000 (0.0100%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000150 | BRIN: 0.000208 | Speedup: 0.72x
+
+--- Query size = 5000 (0.0500%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000613 | BRIN: 0.000533 | Speedup: 1.15x
+
+--- Query size = 10000 (0.1000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.001184 | BRIN: 0.000831 | Speedup: 1.43x
+
+--- Query size = 50000 (0.5000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.005200 | BRIN: 0.003729 | Speedup: 1.39x
+
+--- Query size = 100000 (1.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.010483 | BRIN: 0.007106 | Speedup: 1.48x
+
+--- Query size = 200000 (2.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.020506 | BRIN: 0.013924 | Speedup: 1.47x
+
+--- Query size = 500000 (5.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.051027 | BRIN: 0.034297 | Speedup: 1.49x
+
+--- Query size = 1000000 (10.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.101521 | BRIN: 0.068204 | Speedup: 1.49x
+
+--- Query size = 2000000 (20.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000023 | BRIN: 0.000119 | Speedup: 0.19x
+
+--- Query size = 5000000 (50.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.022930 | BRIN: 0.015996 | Speedup: 1.43x
+
+--- Query size = 8000000 (80.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.085565 | BRIN: 0.057620 | Speedup: 1.48x
+
+=====================================
+BLOCK SIZE = 5000 (0.0500% of table)
+=====================================
+BRIN build time: 0.529439 sec
+BTree build time: 1.736836 sec
+
+--- Query size = 10 (0.0001%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000030 | BRIN: 0.000422 | Speedup: 0.07x
+
+--- Query size = 50 (0.0005%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000036 | BRIN: 0.000442 | Speedup: 0.08x
+
+--- Query size = 100 (0.0010%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000041 | BRIN: 0.000410 | Speedup: 0.10x
+
+--- Query size = 500 (0.0050%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000088 | BRIN: 0.000454 | Speedup: 0.19x
+
+--- Query size = 1000 (0.0100%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000161 | BRIN: 0.000432 | Speedup: 0.37x
+
+--- Query size = 5000 (0.0500%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000664 | BRIN: 0.000756 | Speedup: 0.88x
+
+--- Query size = 10000 (0.1000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.001177 | BRIN: 0.001207 | Speedup: 0.98x
+
+--- Query size = 50000 (0.5000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.005497 | BRIN: 0.004034 | Speedup: 1.36x
+
+--- Query size = 100000 (1.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.010758 | BRIN: 0.007706 | Speedup: 1.40x
+
+--- Query size = 200000 (2.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.020352 | BRIN: 0.014336 | Speedup: 1.42x
+
+--- Query size = 500000 (5.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.050809 | BRIN: 0.034520 | Speedup: 1.47x
+
+--- Query size = 1000000 (10.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.102321 | BRIN: 0.068474 | Speedup: 1.49x
+
+--- Query size = 2000000 (20.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000020 | BRIN: 0.000432 | Speedup: 0.05x
+
+--- Query size = 5000000 (50.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.023164 | BRIN: 0.016073 | Speedup: 1.44x
+
+--- Query size = 8000000 (80.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.086429 | BRIN: 0.057528 | Speedup: 1.50x
+
+=====================================
+BLOCK SIZE = 10000 (0.1000% of table)
+=====================================
+BRIN build time: 0.528051 sec
+BTree build time: 1.733581 sec
+
+--- Query size = 10 (0.0001%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000030 | BRIN: 0.000810 | Speedup: 0.04x
+
+--- Query size = 50 (0.0005%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000034 | BRIN: 0.000736 | Speedup: 0.05x
+
+--- Query size = 100 (0.0010%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000039 | BRIN: 0.000771 | Speedup: 0.05x
+
+--- Query size = 500 (0.0050%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000086 | BRIN: 0.000816 | Speedup: 0.10x
+
+--- Query size = 1000 (0.0100%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000145 | BRIN: 0.000788 | Speedup: 0.18x
+
+--- Query size = 5000 (0.0500%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000633 | BRIN: 0.000837 | Speedup: 0.76x
+
+--- Query size = 10000 (0.1000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.001121 | BRIN: 0.001549 | Speedup: 0.72x
+
+--- Query size = 50000 (0.5000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.005218 | BRIN: 0.004441 | Speedup: 1.17x
+
+--- Query size = 100000 (1.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.010454 | BRIN: 0.007864 | Speedup: 1.33x
+
+--- Query size = 200000 (2.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.020670 | BRIN: 0.014849 | Speedup: 1.39x
+
+--- Query size = 500000 (5.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.051950 | BRIN: 0.034830 | Speedup: 1.49x
+
+--- Query size = 1000000 (10.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.101868 | BRIN: 0.068508 | Speedup: 1.49x
+
+--- Query size = 2000000 (20.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000021 | BRIN: 0.000800 | Speedup: 0.03x
+
+--- Query size = 5000000 (50.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.023213 | BRIN: 0.015953 | Speedup: 1.46x
+
+--- Query size = 8000000 (80.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.085309 | BRIN: 0.058288 | Speedup: 1.46x
+
+=====================================
+BLOCK SIZE = 50000 (0.5000% of table)
+=====================================
+BRIN build time: 0.527674 sec
+BTree build time: 1.725088 sec
+
+--- Query size = 10 (0.0001%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000031 | BRIN: 0.003790 | Speedup: 0.01x
+
+--- Query size = 50 (0.0005%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000036 | BRIN: 0.003826 | Speedup: 0.01x
+
+--- Query size = 100 (0.0010%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000089 | BRIN: 0.003818 | Speedup: 0.02x
+
+--- Query size = 500 (0.0050%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000090 | BRIN: 0.003692 | Speedup: 0.02x
+
+--- Query size = 1000 (0.0100%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000145 | BRIN: 0.003850 | Speedup: 0.04x
+
+--- Query size = 5000 (0.0500%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000649 | BRIN: 0.003589 | Speedup: 0.18x
+
+--- Query size = 10000 (0.1000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.001142 | BRIN: 0.003853 | Speedup: 0.30x
+
+--- Query size = 50000 (0.5000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.005312 | BRIN: 0.007055 | Speedup: 0.75x
+
+--- Query size = 100000 (1.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.010499 | BRIN: 0.010746 | Speedup: 0.98x
+
+--- Query size = 200000 (2.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.020527 | BRIN: 0.017285 | Speedup: 1.19x
+
+--- Query size = 500000 (5.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.055760 | BRIN: 0.037902 | Speedup: 1.47x
+
+--- Query size = 1000000 (10.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.110823 | BRIN: 0.075933 | Speedup: 1.46x
+
+--- Query size = 2000000 (20.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000025 | BRIN: 0.003714 | Speedup: 0.01x
+
+--- Query size = 5000000 (50.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.023899 | BRIN: 0.017463 | Speedup: 1.37x
+
+--- Query size = 8000000 (80.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.086132 | BRIN: 0.058654 | Speedup: 1.47x
+
+=====================================
+BLOCK SIZE = 100000 (1.0000% of table)
+=====================================
+BRIN build time: 0.528460 sec
+BTree build time: 1.767927 sec
+
+--- Query size = 10 (0.0001%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000032 | BRIN: 0.007152 | Speedup: 0.00x
+
+--- Query size = 50 (0.0005%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000037 | BRIN: 0.007060 | Speedup: 0.01x
+
+--- Query size = 100 (0.0010%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000040 | BRIN: 0.007123 | Speedup: 0.01x
+
+--- Query size = 500 (0.0050%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000089 | BRIN: 0.007396 | Speedup: 0.01x
+
+--- Query size = 1000 (0.0100%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000140 | BRIN: 0.007041 | Speedup: 0.02x
+
+--- Query size = 5000 (0.0500%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000564 | BRIN: 0.007365 | Speedup: 0.08x
+
+--- Query size = 10000 (0.1000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.001168 | BRIN: 0.007273 | Speedup: 0.16x
+
+--- Query size = 50000 (0.5000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.007006 | BRIN: 0.007139 | Speedup: 0.98x
+
+--- Query size = 100000 (1.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.010503 | BRIN: 0.014365 | Speedup: 0.73x
+
+--- Query size = 200000 (2.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.020215 | BRIN: 0.021100 | Speedup: 0.96x
+
+--- Query size = 500000 (5.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.054824 | BRIN: 0.045028 | Speedup: 1.22x
+
+--- Query size = 1000000 (10.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.112778 | BRIN: 0.083118 | Speedup: 1.36x
+
+--- Query size = 2000000 (20.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000024 | BRIN: 0.007255 | Speedup: 0.00x
+
+--- Query size = 5000000 (50.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.023308 | BRIN: 0.021660 | Speedup: 1.08x
+
+--- Query size = 8000000 (80.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.085831 | BRIN: 0.063008 | Speedup: 1.36x
+
+=====================================
+BLOCK SIZE = 200000 (2.0000% of table)
+=====================================
+BRIN build time: 0.528221 sec
+BTree build time: 1.735885 sec
+
+--- Query size = 10 (0.0001%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000038 | BRIN: 0.013998 | Speedup: 0.00x
+
+--- Query size = 50 (0.0005%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000038 | BRIN: 0.013761 | Speedup: 0.00x
+
+--- Query size = 100 (0.0010%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000044 | BRIN: 0.013720 | Speedup: 0.00x
+
+--- Query size = 500 (0.0050%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000089 | BRIN: 0.013850 | Speedup: 0.01x
+
+--- Query size = 1000 (0.0100%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000178 | BRIN: 0.013904 | Speedup: 0.01x
+
+--- Query size = 5000 (0.0500%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000639 | BRIN: 0.014353 | Speedup: 0.04x
+
+--- Query size = 10000 (0.1000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.001163 | BRIN: 0.014324 | Speedup: 0.08x
+
+--- Query size = 50000 (0.5000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.005223 | BRIN: 0.013965 | Speedup: 0.37x
+
+--- Query size = 100000 (1.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.010698 | BRIN: 0.014048 | Speedup: 0.76x
+
+--- Query size = 200000 (2.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.020201 | BRIN: 0.027518 | Speedup: 0.73x
+
+--- Query size = 500000 (5.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.051483 | BRIN: 0.041093 | Speedup: 1.25x
+
+--- Query size = 1000000 (10.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.102263 | BRIN: 0.081445 | Speedup: 1.26x
+
+--- Query size = 2000000 (20.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000022 | BRIN: 0.013824 | Speedup: 0.00x
+
+--- Query size = 5000000 (50.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.023492 | BRIN: 0.027621 | Speedup: 0.85x
+
+--- Query size = 8000000 (80.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.087507 | BRIN: 0.069243 | Speedup: 1.26x
+
+=====================================
+BLOCK SIZE = 500000 (5.0000% of table)
+=====================================
+BRIN build time: 0.527803 sec
+BTree build time: 1.728461 sec
+
+--- Query size = 10 (0.0001%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000028 | BRIN: 0.034317 | Speedup: 0.00x
+
+--- Query size = 50 (0.0005%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000033 | BRIN: 0.034574 | Speedup: 0.00x
+
+--- Query size = 100 (0.0010%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000039 | BRIN: 0.034164 | Speedup: 0.00x
+
+--- Query size = 500 (0.0050%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000092 | BRIN: 0.034062 | Speedup: 0.00x
+
+--- Query size = 1000 (0.0100%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000172 | BRIN: 0.034199 | Speedup: 0.01x
+
+--- Query size = 5000 (0.0500%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000600 | BRIN: 0.034517 | Speedup: 0.02x
+
+--- Query size = 10000 (0.1000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.001140 | BRIN: 0.034614 | Speedup: 0.03x
+
+--- Query size = 50000 (0.5000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.005314 | BRIN: 0.034092 | Speedup: 0.16x
+
+--- Query size = 100000 (1.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.010642 | BRIN: 0.034911 | Speedup: 0.30x
+
+--- Query size = 200000 (2.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.020541 | BRIN: 0.034407 | Speedup: 0.60x
+
+--- Query size = 500000 (5.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.051055 | BRIN: 0.068126 | Speedup: 0.75x
+
+--- Query size = 1000000 (10.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.102746 | BRIN: 0.104537 | Speedup: 0.98x
+
+--- Query size = 2000000 (20.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000022 | BRIN: 0.034271 | Speedup: 0.00x
+
+--- Query size = 5000000 (50.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.023144 | BRIN: 0.034211 | Speedup: 0.68x
+
+--- Query size = 8000000 (80.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.086038 | BRIN: 0.069406 | Speedup: 1.24x
+
+=====================================
+BLOCK SIZE = 1000000 (10.0000% of table)
+=====================================
+BRIN build time: 0.529507 sec
+BTree build time: 1.724489 sec
+
+--- Query size = 10 (0.0001%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000030 | BRIN: 0.068100 | Speedup: 0.00x
+
+--- Query size = 50 (0.0005%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000035 | BRIN: 0.068253 | Speedup: 0.00x
+
+--- Query size = 100 (0.0010%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000042 | BRIN: 0.068266 | Speedup: 0.00x
+
+--- Query size = 500 (0.0050%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000089 | BRIN: 0.068313 | Speedup: 0.00x
+
+--- Query size = 1000 (0.0100%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000148 | BRIN: 0.068035 | Speedup: 0.00x
+
+--- Query size = 5000 (0.0500%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000604 | BRIN: 0.068202 | Speedup: 0.01x
+
+--- Query size = 10000 (0.1000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.001138 | BRIN: 0.068029 | Speedup: 0.02x
+
+--- Query size = 50000 (0.5000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.005401 | BRIN: 0.068838 | Speedup: 0.08x
+
+--- Query size = 100000 (1.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.010408 | BRIN: 0.069092 | Speedup: 0.15x
+
+--- Query size = 200000 (2.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.020398 | BRIN: 0.068147 | Speedup: 0.30x
+
+--- Query size = 500000 (5.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.051244 | BRIN: 0.068237 | Speedup: 0.75x
+
+--- Query size = 1000000 (10.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.101922 | BRIN: 0.138828 | Speedup: 0.73x
+
+--- Query size = 2000000 (20.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.000022 | BRIN: 0.068543 | Speedup: 0.00x
+
+--- Query size = 5000000 (50.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.023168 | BRIN: 0.068410 | Speedup: 0.34x
+
+--- Query size = 8000000 (80.0000%) ---
+BTree PLAN:
+PLAN: SEARCH logs USING INDEX idx_btree (d_integer>? AND d_integer<?)
+BRIN PLAN:
+PLAN: SCAN b VIRTUAL TABLE INDEX 3:
+PLAN: SEARCH l USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)
+BTree: 0.086021 | BRIN: 0.068085 | Speedup: 1.26x
