@@ -580,46 +580,58 @@ static int brinIncrementalUpdate(BrinVtab *v)
  * Build the full in-memory BRIN index by scanning the base
  * table once from beginning to end.
  *
- * THESIS ASSUMPTIONS
- * ------------------
- * - The indexed column is globally ordered ascending.
- * - Data is append-only.
- * - No UPDATE and no DELETE are considered.
+ * SAFETY IMPROVEMENTS
+ * -------------------
+ * 1. The scan order is explicit: ORDER BY rowid ASC.
+ * 2. The global monotonic ordering assumption is validated.
+ * 3. The build is transactional:
+ *      - build into temporary storage first
+ *      - only replace v->ranges on success
+ * 4. last_block_size stores the size of the last stored
+ *    block, not the size of an unfinished temporary block.
+ * 5. SQLITE_DONE is checked explicitly before commit.
+ * 6. NULL indexed values are rejected.
  *
- * Because the base data is globally ordered, each block
- * summary can be built very efficiently:
- *
- *   - The first value seen in a block is the block MIN
- *   - The last  value seen in a block is the block MAX
- *
- * This is true for:
- *   - INTEGER
- *   - REAL
- *   - TEXT using ISO 8601 lexical conventions
- *
- * For TEXT, lexicographic order matches the intended
- * logical order of the prototype, so the first/last
- * values of the block also define min/max.
- *
- * OUTPUT
- * ------
- * v->ranges will contain one BrinRange per block.
- * Each BrinRange stores:
- *   - min / max value
- *   - start_rowid / end_rowid
- *
- * SIDE EFFECTS
- * ------------
- * Also updates:
- *   - v->total_blocks
- *   - v->last_indexed_rowid
- *   - v->last_block_size
- *   - v->index_ready
+ * NOTE
+ * ----
+ * This version validates non-decreasing order.
+ * To enforce strictly increasing order, replace:
+ *   val < prev_num            with val <= prev_num
+ *   brinTextCmp(prev, cur)>0  with brinTextCmp(prev, cur)>=0
  * -------------------------------------------------------- */
 static int brinBuildIndex(BrinVtab *v)
 {
+    sqlite3_stmt *stmt = NULL;
+    int rc = SQLITE_OK;
+
+    char sql[1024];
+
+    BrinRange *new_ranges = NULL;
+    int new_total_blocks = 0;
+    int capacity = 128;
+
+    BrinRange current;
+    int current_active = 0;
+    int block_pos = 0;
+
+    sqlite3_int64 last_rowid_seen = 0;
+    int last_stored_block_size = 0;
+
+    double prev_num = 0.0;
+    int have_prev_num = 0;
+
+    char *prev_text = NULL;
+
     if (!v || !v->db)
         return SQLITE_ERROR;
+
+    if (v->block_size <= 0) {
+        sqlite3_free(v->base.zErrMsg);
+        v->base.zErrMsg = sqlite3_mprintf(
+            "BRIN build failed: block_size must be > 0"
+        );
+        return SQLITE_ERROR;
+    }
 
     DEBUG_PRINT("[BRIN] brinBuildIndex()\n");
     DEBUG_PRINT("Table      : %s\n", v->table);
@@ -627,64 +639,96 @@ static int brinBuildIndex(BrinVtab *v)
     DEBUG_PRINT("Block size : %d\n", v->block_size);
     DEBUG_PRINT("Affinity   : %d\n\n", v->affinity);
 
-    if (v->ranges)
-    {
-        if (v->affinity == BRIN_TYPE_TEXT)
-        {
-            for (int i = 0; i < v->total_blocks; i++)
-            {
-                free(v->ranges[i].u.txt.min);
-                free(v->ranges[i].u.txt.max);
-            }
-        }
+    sqlite3_free(v->base.zErrMsg);
+    v->base.zErrMsg = NULL;
 
-        free(v->ranges);
-        v->ranges = NULL;
-        v->total_blocks = 0;
-    }
-
-    char sql[1024];
     snprintf(sql, sizeof(sql),
-             "SELECT rowid, %s FROM %s;",
+             "SELECT rowid, %s FROM %s ORDER BY rowid ASC;",
              v->column, v->table);
 
-    sqlite3_stmt *stmt = NULL;
-    int rc = sqlite3_prepare_v2(v->db, sql, -1, &stmt, NULL);
-
-    if (rc != SQLITE_OK)
-    {
-        printf("[BRIN] ERROR preparing scan: %s\n",
-               sqlite3_errmsg(v->db));
+    rc = sqlite3_prepare_v2(v->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        sqlite3_free(v->base.zErrMsg);
+        v->base.zErrMsg = sqlite3_mprintf(
+            "BRIN build failed: prepare error: %s",
+            sqlite3_errmsg(v->db)
+        );
         return rc;
     }
 
-    int capacity = 128;
-    int block_pos = 0;
-    sqlite3_int64 last_rowid_seen = 0;
-
-    v->ranges = calloc(capacity, sizeof(BrinRange));
-    if (!v->ranges)
-    {
+    new_ranges = calloc((size_t)capacity, sizeof(BrinRange));
+    if (!new_ranges) {
         sqlite3_finalize(stmt);
         return SQLITE_NOMEM;
     }
 
-    BrinRange current;
     memset(&current, 0, sizeof(BrinRange));
-    current.type = v->affinity;
 
     while ((rc = sqlite3_step(stmt)) == SQLITE_ROW)
     {
         sqlite3_int64 rowid = sqlite3_column_int64(stmt, 0);
+        int value_type = sqlite3_column_type(stmt, 1);
+
+        if (value_type == SQLITE_NULL) {
+            sqlite3_free(v->base.zErrMsg);
+            v->base.zErrMsg = sqlite3_mprintf(
+                "BRIN build failed: NULL in column '%s' at rowid %lld",
+                v->column, rowid
+            );
+            rc = SQLITE_CONSTRAINT;
+            goto build_error;
+        }
+
         last_rowid_seen = rowid;
+
+        if (v->affinity == BRIN_TYPE_TEXT) {
+            const char *txt =
+                (const char*)sqlite3_column_text(stmt, 1);
+
+            if (prev_text && brinTextCmp(prev_text, txt) > 0) {
+                sqlite3_free(v->base.zErrMsg);
+                v->base.zErrMsg = sqlite3_mprintf(
+                    "BRIN build failed: TEXT values not ordered "
+                    "at rowid %lld",
+                    rowid
+                );
+                rc = SQLITE_CONSTRAINT;
+                goto build_error;
+            }
+
+            free(prev_text);
+            prev_text = strdup(txt ? txt : "");
+            if (!prev_text) {
+                rc = SQLITE_NOMEM;
+                goto build_error;
+            }
+        } else {
+            double val = sqlite3_column_double(stmt, 1);
+
+            if (have_prev_num && val < prev_num) {
+                sqlite3_free(v->base.zErrMsg);
+                v->base.zErrMsg = sqlite3_mprintf(
+                    "BRIN build failed: numeric values not ordered "
+                    "at rowid %lld",
+                    rowid
+                );
+                rc = SQLITE_CONSTRAINT;
+                goto build_error;
+            }
+
+            prev_num = val;
+            have_prev_num = 1;
+        }
 
         if (block_pos == 0)
         {
             DEBUG_PRINT("Starting new block at rowid=%lld\n", rowid);
 
+            memset(&current, 0, sizeof(BrinRange));
+            current.type = v->affinity;
             current.start_rowid = rowid;
             current.end_rowid = rowid;
-            current.type = v->affinity;
+            current_active = 1;
 
             if (v->affinity == BRIN_TYPE_TEXT)
             {
@@ -694,16 +738,23 @@ static int brinBuildIndex(BrinVtab *v)
                 current.u.txt.min = strdup(txt ? txt : "");
                 current.u.txt.max = strdup(txt ? txt : "");
 
+                if (!current.u.txt.min || !current.u.txt.max) {
+                    rc = SQLITE_NOMEM;
+                    goto build_error;
+                }
+
                 DEBUG_PRINT("Initial TEXT value for block: %s\n",
                             txt ? txt : "(null)");
             }
             else
             {
                 double val = sqlite3_column_double(stmt, 1);
+
                 current.u.num.min = val;
                 current.u.num.max = val;
 
-                DEBUG_PRINT("Initial numeric value for block: %.6f\n", val);
+                DEBUG_PRINT("Initial numeric value for block: %.6f\n",
+                            val);
             }
         }
         else
@@ -714,9 +765,15 @@ static int brinBuildIndex(BrinVtab *v)
             {
                 const char *txt =
                     (const char*)sqlite3_column_text(stmt, 1);
+                char *new_max = strdup(txt ? txt : "");
+
+                if (!new_max) {
+                    rc = SQLITE_NOMEM;
+                    goto build_error;
+                }
 
                 free(current.u.txt.max);
-                current.u.txt.max = strdup(txt ? txt : "");
+                current.u.txt.max = new_max;
 
                 DEBUG_PRINT("Updated block TEXT max to: %s\n",
                             txt ? txt : "(null)");
@@ -726,7 +783,8 @@ static int brinBuildIndex(BrinVtab *v)
                 double val = sqlite3_column_double(stmt, 1);
                 current.u.num.max = val;
 
-                DEBUG_PRINT("Updated block numeric max to: %.6f\n", val);
+                DEBUG_PRINT("Updated block numeric max to: %.6f\n",
+                            val);
             }
         }
 
@@ -734,88 +792,166 @@ static int brinBuildIndex(BrinVtab *v)
 
         if (block_pos >= v->block_size)
         {
-            if (v->total_blocks >= capacity)
+            if (new_total_blocks >= capacity)
             {
-                capacity *= 2;
-                BrinRange *tmp = realloc(v->ranges,
-                                         capacity * sizeof(BrinRange));
+                int new_capacity = capacity * 2;
+                BrinRange *tmp = realloc(
+                    new_ranges,
+                    (size_t)new_capacity * sizeof(BrinRange)
+                );
+
                 if (!tmp) {
-                    sqlite3_finalize(stmt);
-                    return SQLITE_NOMEM;
+                    rc = SQLITE_NOMEM;
+                    goto build_error;
                 }
-                v->ranges = tmp;
+
+                new_ranges = tmp;
+                capacity = new_capacity;
             }
 
-            v->ranges[v->total_blocks++] = current;
+            new_ranges[new_total_blocks++] = current;
+            last_stored_block_size = block_pos;
 
             if (v->affinity == BRIN_TYPE_TEXT) {
-                DEBUG_PRINT("Stored TEXT block %d: rowid [%lld, %lld], min=%s, max=%s\n",
-                            v->total_blocks - 1,
-                            current.start_rowid,
-                            current.end_rowid,
-                            current.u.txt.min ? current.u.txt.min : "(null)",
-                            current.u.txt.max ? current.u.txt.max : "(null)");
+                DEBUG_PRINT(
+                    "Stored TEXT block %d: rowid [%lld, %lld], "
+                    "min=%s, max=%s\n",
+                    new_total_blocks - 1,
+                    current.start_rowid,
+                    current.end_rowid,
+                    current.u.txt.min ? current.u.txt.min : "(null)",
+                    current.u.txt.max ? current.u.txt.max : "(null)"
+                );
             } else {
-                DEBUG_PRINT("Stored numeric block %d: rowid [%lld, %lld], min=%.6f, max=%.6f\n",
-                            v->total_blocks - 1,
-                            current.start_rowid,
-                            current.end_rowid,
-                            current.u.num.min,
-                            current.u.num.max);
+                DEBUG_PRINT(
+                    "Stored numeric block %d: rowid [%lld, %lld], "
+                    "min=%.6f, max=%.6f\n",
+                    new_total_blocks - 1,
+                    current.start_rowid,
+                    current.end_rowid,
+                    current.u.num.min,
+                    current.u.num.max
+                );
             }
 
             memset(&current, 0, sizeof(BrinRange));
-            current.type = v->affinity;
+            current_active = 0;
             block_pos = 0;
         }
     }
 
+    if (rc != SQLITE_DONE) {
+        sqlite3_free(v->base.zErrMsg);
+        v->base.zErrMsg = sqlite3_mprintf(
+            "BRIN build failed: sqlite3_step error: %s",
+            sqlite3_errmsg(v->db)
+        );
+        goto build_error;
+    }
+
     if (block_pos > 0)
     {
-        if (v->total_blocks >= capacity)
+        if (new_total_blocks >= capacity)
         {
-            capacity *= 2;
-            BrinRange *tmp = realloc(v->ranges,
-                                     capacity * sizeof(BrinRange));
+            int new_capacity = capacity * 2;
+            BrinRange *tmp = realloc(
+                new_ranges,
+                (size_t)new_capacity * sizeof(BrinRange)
+            );
+
             if (!tmp) {
-                sqlite3_finalize(stmt);
-                return SQLITE_NOMEM;
+                rc = SQLITE_NOMEM;
+                goto build_error;
             }
-            v->ranges = tmp;
+
+            new_ranges = tmp;
+            capacity = new_capacity;
         }
 
-        v->ranges[v->total_blocks++] = current;
+        new_ranges[new_total_blocks++] = current;
+        last_stored_block_size = block_pos;
 
         if (v->affinity == BRIN_TYPE_TEXT) {
-            DEBUG_PRINT("Stored partial TEXT block %d: rowid [%lld, %lld], size=%d, min=%s, max=%s\n",
-                        v->total_blocks - 1,
-                        current.start_rowid,
-                        current.end_rowid,
-                        block_pos,
-                        current.u.txt.min ? current.u.txt.min : "(null)",
-                        current.u.txt.max ? current.u.txt.max : "(null)");
+            DEBUG_PRINT(
+                "Stored partial TEXT block %d: rowid [%lld, %lld], "
+                "size=%d, min=%s, max=%s\n",
+                new_total_blocks - 1,
+                current.start_rowid,
+                current.end_rowid,
+                block_pos,
+                current.u.txt.min ? current.u.txt.min : "(null)",
+                current.u.txt.max ? current.u.txt.max : "(null)"
+            );
         } else {
-            DEBUG_PRINT("Stored partial numeric block %d: rowid [%lld, %lld], size=%d, min=%.6f, max=%.6f\n",
-                        v->total_blocks - 1,
-                        current.start_rowid,
-                        current.end_rowid,
-                        block_pos,
-                        current.u.num.min,
-                        current.u.num.max);
+            DEBUG_PRINT(
+                "Stored partial numeric block %d: rowid [%lld, %lld], "
+                "size=%d, min=%.6f, max=%.6f\n",
+                new_total_blocks - 1,
+                current.start_rowid,
+                current.end_rowid,
+                block_pos,
+                current.u.num.min,
+                current.u.num.max
+            );
         }
+
+        memset(&current, 0, sizeof(BrinRange));
+        current_active = 0;
+        block_pos = 0;
     }
 
     sqlite3_finalize(stmt);
+    stmt = NULL;
 
+    free(prev_text);
+    prev_text = NULL;
+
+    if (v->ranges) {
+        if (v->affinity == BRIN_TYPE_TEXT) {
+            for (int i = 0; i < v->total_blocks; i++) {
+                free(v->ranges[i].u.txt.min);
+                free(v->ranges[i].u.txt.max);
+            }
+        }
+        free(v->ranges);
+    }
+
+    v->ranges = new_ranges;
+    v->total_blocks = new_total_blocks;
     v->last_indexed_rowid = last_rowid_seen;
-    v->last_block_size = block_pos;
+    v->last_block_size = last_stored_block_size;
     v->index_ready = 1;
 
     DEBUG_PRINT("Total blocks         : %d\n", v->total_blocks);
-    DEBUG_PRINT("Last indexed rowid   : %lld\n", v->last_indexed_rowid);
-    DEBUG_PRINT("Last block size      : %d\n", v->last_block_size);
+    DEBUG_PRINT("Last indexed rowid   : %lld\n",
+                v->last_indexed_rowid);
+    DEBUG_PRINT("Last block size      : %d\n",
+                v->last_block_size);
 
     return SQLITE_OK;
+
+  build_error:
+    if (stmt)
+        sqlite3_finalize(stmt);
+
+    free(prev_text);
+
+    if (current_active && v->affinity == BRIN_TYPE_TEXT) {
+        free(current.u.txt.min);
+        free(current.u.txt.max);
+    }
+
+    if (new_ranges) {
+        if (v->affinity == BRIN_TYPE_TEXT) {
+            for (int i = 0; i < new_total_blocks; i++) {
+                free(new_ranges[i].u.txt.min);
+                free(new_ranges[i].u.txt.max);
+            }
+        }
+        free(new_ranges);
+    }
+
+    return rc;
 }
 
 
