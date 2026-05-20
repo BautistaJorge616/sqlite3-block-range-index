@@ -41,6 +41,50 @@ typedef enum {
 
 
 /* --------------------------------------------------
+ * BrinOutputRange
+ *
+ * PURPOSE
+ * -------
+ * Represent one row produced by the virtual table cursor
+ * after applying range coalescing.
+ *
+ * A BrinOutputRange may represent:
+ *
+ *   - exactly one BRIN block
+ *   - multiple contiguous BRIN blocks fused together
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * The base BRIN array v->ranges stores one summary per
+ * physical/logical BRIN block.
+ *
+ * However, during query execution, if several candidate
+ * blocks are contiguous and have the same recheck status,
+ * we can expose them as a single virtual row.
+ *
+ * FIELDS
+ * ------
+ * start_block:
+ *   First BRIN block included in this output segment.
+ *
+ * end_block:
+ *   Last BRIN block included in this output segment.
+ *
+ * needs_recheck:
+ *   0 -> all rows in this segment are guaranteed to satisfy
+ *        the range predicate.
+ *
+ *   1 -> this segment is a boundary/partial segment and
+ *        the base table predicate must still be checked.
+ * -------------------------------------------------- */
+typedef struct BrinOutputRange {
+    int start_block;
+    int end_block;
+    int needs_recheck;
+} BrinOutputRange;
+
+
+/* --------------------------------------------------
  * BrinRange
  *
  * PURPOSE
@@ -84,6 +128,8 @@ typedef struct BrinRange {
     sqlite3_int64 end_rowid;
 } BrinRange;
 
+static double brinRangeMinAsDouble(const BrinRange *r);
+static double brinRangeMaxAsDouble(const BrinRange *r);
 
 /* --------------------------------------------------
  * BrinVtab
@@ -146,23 +192,25 @@ typedef struct {
  * -------
  * Represent one active scan over the BRIN virtual table.
  *
- * In this prototype, a cursor iterates over candidate
- * BRIN block summaries selected by xFilter().
+ * BASE IDEA
+ * ---------
+ * xFilter() computes candidate BRIN blocks for a query
+ * range [low, high].
  *
- * FIELDS
- * ------
- * start_block / end_block:
- *   candidate block interval selected for the current query
+ * In the original implementation, the cursor returned one
+ * virtual row per candidate block.
  *
- * current_block:
- *   current position inside that interval
+ * In this version, xFilter() builds an output list of
+ * coalesced ranges. Each output range may represent one
+ * block or multiple contiguous blocks.
  *
- * eof:
- *   indicates whether the scan has finished
+ * This allows the virtual table to reduce:
  *
- * low / high:
- *   optional storage of the normalized query range,
- *   useful for debugging and possible future extensions
+ *   - calls to xNext()
+ *   - calls to xColumn()
+ *   - outer-loop iterations in the join
+ *
+ * while keeping the result correct.
  * -------------------------------------------------- */
 typedef struct {
     sqlite3_vtab_cursor base;
@@ -172,9 +220,46 @@ typedef struct {
     sqlite3_int64 low;
     sqlite3_int64 high;
 
+    /*
+     * Original candidate block interval.
+     *
+     * Kept for debug and for compatibility with the existing
+     * mental model.
+     */
     int start_block;
     int end_block;
+
+    /*
+     * The old implementation used current_block directly.
+     *
+     * With coalescing, the active cursor position is now
+     * current_output.
+     */
     int current_block;
+
+    /*
+     * Coalesced output segments.
+     *
+     * These are built in xFilter() and consumed by xNext(),
+     * xColumn(), and xRowid().
+     */
+    BrinOutputRange *output_ranges;
+    int output_count;
+    int output_capacity;
+    int current_output;
+
+    /*
+     * Optional filter derived from:
+     *
+     *   b.needs_recheck = 0
+     *   b.needs_recheck = 1
+     *
+     * Values:
+     *   -1 -> return all output ranges
+     *    0 -> return only fully-covered ranges
+     *    1 -> return only boundary/recheck ranges
+     */
+    int needs_recheck_filter;
 
     int eof;
 } BrinCursor;
@@ -183,6 +268,363 @@ typedef struct {
 /* =========================================================
  * 2. Internal helper functions
  * ========================================================= */
+
+/* --------------------------------------------------
+ * brinResetOutputRanges
+ *
+ * PURPOSE
+ * -------
+ * Clear the coalesced output list owned by a cursor.
+ *
+ * WHEN USED
+ * ---------
+ * Called at the beginning of xFilter() before building a
+ * new output list for the new query range.
+ *
+ * Also safe to call from xClose().
+ * -------------------------------------------------- */
+static void brinResetOutputRanges(BrinCursor *c)
+{
+    if (!c)
+        return;
+
+    if (c->output_ranges) {
+        free(c->output_ranges);
+        c->output_ranges = NULL;
+    }
+
+    c->output_count = 0;
+    c->output_capacity = 0;
+    c->current_output = 0;
+}
+
+
+/* --------------------------------------------------
+ * brinBlockNeedsRecheck
+ *
+ * PURPOSE
+ * -------
+ * Decide whether one BRIN block needs row-level recheck
+ * for the query range [low, high].
+ *
+ * RULE
+ * ----
+ * A block does NOT need recheck when it is fully covered:
+ *
+ *   block.min >= low
+ *   block.max <= high
+ *
+ * In that case every value in the block is guaranteed to
+ * be inside the query range.
+ *
+ * A block DOES need recheck when it intersects the query
+ * range but is not fully covered. These are boundary blocks.
+ *
+ * RETURN VALUE
+ * ------------
+ * 0 -> no recheck needed
+ * 1 -> recheck needed
+ * -------------------------------------------------- */
+static int brinBlockNeedsRecheck(
+    BrinVtab *v,
+    int block,
+    double low,
+    double high
+){
+    BrinRange *r;
+    double block_min;
+    double block_max;
+
+    if (!v)
+        return 1;
+
+    if (block < 0)
+        return 1;
+
+    if (block >= v->total_blocks)
+        return 1;
+
+    r = &v->ranges[block];
+
+    block_min = brinRangeMinAsDouble(r);
+    block_max = brinRangeMaxAsDouble(r);
+
+    if (block_min >= low) {
+        if (block_max <= high) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+
+/* --------------------------------------------------
+ * brinAppendOutputRange
+ *
+ * PURPOSE
+ * -------
+ * Append one output range to the cursor.
+ *
+ * COALESCING RULE
+ * ---------------
+ * If the new range is contiguous with the previous output
+ * range and both have the same needs_recheck value, merge
+ * them into a single output range.
+ *
+ * Example:
+ *
+ *   previous: blocks [10, 12], needs_recheck = 0
+ *   new:      blocks [13, 14], needs_recheck = 0
+ *
+ * Result:
+ *
+ *   one range [10, 14], needs_recheck = 0
+ *
+ * This is the core of range coalescing.
+ * -------------------------------------------------- */
+static int brinAppendOutputRange(
+    BrinCursor *c,
+    int start_block,
+    int end_block,
+    int needs_recheck
+){
+    BrinOutputRange *last;
+    BrinOutputRange *tmp;
+    int new_capacity;
+
+    if (!c)
+        return SQLITE_ERROR;
+
+    if (start_block > end_block)
+        return SQLITE_OK;
+
+    /*
+     * Optional output filtering.
+     *
+     * If the query includes:
+     *
+     *   b.needs_recheck = 0
+     *
+     * then only fully-covered segments are returned.
+     *
+     * If the query includes:
+     *
+     *   b.needs_recheck = 1
+     *
+     * then only boundary/recheck segments are returned.
+     */
+    if (c->needs_recheck_filter != -1) {
+        if (c->needs_recheck_filter != needs_recheck) {
+            return SQLITE_OK;
+        }
+    }
+
+    /*
+     * If possible, merge into the previous output range.
+     */
+    if (c->output_count > 0) {
+        last = &c->output_ranges[c->output_count - 1];
+
+        if (last->needs_recheck == needs_recheck) {
+            if (last->end_block + 1 == start_block) {
+                last->end_block = end_block;
+                return SQLITE_OK;
+            }
+        }
+    }
+
+    /*
+     * Need a new output range.
+     */
+    if (c->output_count >= c->output_capacity) {
+        if (c->output_capacity == 0) {
+            new_capacity = 4;
+        }
+        else {
+            new_capacity = c->output_capacity * 2;
+        }
+
+        tmp = realloc(
+            c->output_ranges,
+            (size_t)new_capacity * sizeof(BrinOutputRange)
+        );
+
+        if (!tmp)
+            return SQLITE_NOMEM;
+
+        c->output_ranges = tmp;
+        c->output_capacity = new_capacity;
+    }
+
+    c->output_ranges[c->output_count].start_block = start_block;
+    c->output_ranges[c->output_count].end_block = end_block;
+    c->output_ranges[c->output_count].needs_recheck = needs_recheck;
+
+    c->output_count++;
+
+    return SQLITE_OK;
+}
+
+
+/* --------------------------------------------------
+ * brinBuildOutputRanges
+ *
+ * PURPOSE
+ * -------
+ * Build the coalesced output range list for the current
+ * query.
+ *
+ * INPUT
+ * -----
+ * start:
+ *   First candidate BRIN block.
+ *
+ * end:
+ *   Last candidate BRIN block.
+ *
+ * low/high:
+ *   Query bounds in the normalized internal numeric format.
+ *
+ * BEHAVIOR
+ * --------
+ * For every candidate block:
+ *
+ *   1. Determine whether it needs row-level recheck.
+ *   2. Append it to the cursor output list.
+ *   3. Consecutive blocks with the same recheck status are
+ *      automatically merged by brinAppendOutputRange().
+ *
+ * EXPECTED SHAPE FOR ORDERED DATA
+ * -------------------------------
+ * For one contiguous query range over ordered data, the
+ * output is usually at most three segments:
+ *
+ *   left boundary     -> needs_recheck = 1
+ *   fully-covered mid -> needs_recheck = 0
+ *   right boundary    -> needs_recheck = 1
+ * -------------------------------------------------- */
+static int brinBuildOutputRanges(
+    BrinCursor *c,
+    int start,
+    int end,
+    double low,
+    double high
+){
+    int rc;
+
+    if (!c)
+        return SQLITE_ERROR;
+
+    if (start > end)
+        return SQLITE_OK;
+
+    for (int i = start; i <= end; i++) {
+        int needs_recheck;
+
+        needs_recheck =
+            brinBlockNeedsRecheck(c->v, i, low, high);
+
+        rc = brinAppendOutputRange(
+            c,
+            i,
+            i,
+            needs_recheck
+        );
+
+        if (rc != SQLITE_OK)
+            return rc;
+    }
+
+    return SQLITE_OK;
+}
+
+
+/* --------------------------------------------------
+ * brinEstimateOutputRangeCount
+ *
+ * PURPOSE
+ * -------
+ * Estimate how many virtual rows will be produced after
+ * range coalescing.
+ *
+ * This mirrors brinBuildOutputRanges(), but does not
+ * allocate memory.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * xBestIndex() runs during query planning. It should be
+ * cheap and should not build cursor state.
+ *
+ * This function gives the planner a better estimate of
+ * how many virtual rows the vtab will output.
+ * -------------------------------------------------- */
+static int brinEstimateOutputRangeCount(
+    BrinVtab *v,
+    int start,
+    int end,
+    double low,
+    double high,
+    int needs_recheck_filter
+){
+    int count = 0;
+    int have_previous = 0;
+    int previous_needs_recheck = -1;
+    int previous_block = -1;
+
+    if (!v)
+        return 0;
+
+    if (start > end)
+        return 0;
+
+    for (int i = start; i <= end; i++) {
+        int needs_recheck;
+        int include_block = 1;
+
+        needs_recheck =
+            brinBlockNeedsRecheck(v, i, low, high);
+
+        if (needs_recheck_filter != -1) {
+            if (needs_recheck_filter != needs_recheck) {
+                include_block = 0;
+            }
+        }
+
+        if (include_block) {
+            if (!have_previous) {
+                count++;
+                have_previous = 1;
+                previous_needs_recheck = needs_recheck;
+                previous_block = i;
+            }
+            else {
+                int is_contiguous = 0;
+                int same_recheck = 0;
+
+                if (previous_block + 1 == i) {
+                    is_contiguous = 1;
+                }
+
+                if (previous_needs_recheck == needs_recheck) {
+                    same_recheck = 1;
+                }
+
+                if (is_contiguous && same_recheck) {
+                    previous_block = i;
+                }
+                else {
+                    count++;
+                    previous_needs_recheck = needs_recheck;
+                    previous_block = i;
+                }
+            }
+        }
+    }
+
+    return count;
+}
+
 
 /*
  * Fixed datetime format accepted by the BRIN prototype.
@@ -199,150 +641,6 @@ typedef struct {
  */
 #define BRIN_DATETIME_LEN 19
 #define BRIN_DATETIME_BUFSZ 20
-
-/* --------------------------------------------------
- * brinDigit
- *
- * PURPOSE
- * -------
- * Convert one ASCII digit character to its numeric value.
- *
- * RETURN VALUE
- * ------------
- * 0..9 if the character is a decimal digit.
- * -1 otherwise.
- * -------------------------------------------------- */
-static int brinDigit(char c)
-{
-    if (c < '0' || c > '9')
-        return -1;
-
-    return c - '0';
-}
-
-
-/* --------------------------------------------------
- * brinRead2
- *
- * PURPOSE
- * -------
- * Read exactly two decimal digits from a fixed position.
- *
- * EXAMPLE
- * -------
- * For "23", returns 23.
- *
- * RETURN VALUE
- * ------------
- * SQLITE_OK on success.
- * SQLITE_ERROR if either character is not a digit.
- * -------------------------------------------------- */
-static int brinRead2(const char *s, int *out)
-{
-    int d0;
-    int d1;
-
-    if (!s || !out)
-        return SQLITE_ERROR;
-
-    d0 = brinDigit(s[0]);
-    d1 = brinDigit(s[1]);
-
-    if (d0 < 0 || d1 < 0)
-        return SQLITE_ERROR;
-
-    *out = d0 * 10 + d1;
-    return SQLITE_OK;
-}
-
-
-/* --------------------------------------------------
- * brinRead4
- *
- * PURPOSE
- * -------
- * Read exactly four decimal digits from a fixed position.
- *
- * EXAMPLE
- * -------
- * For "3474", returns 3474.
- *
- * RETURN VALUE
- * ------------
- * SQLITE_OK on success.
- * SQLITE_ERROR if any character is not a digit.
- * -------------------------------------------------- */
-static int brinRead4(const char *s, int *out)
-{
-    int d0;
-    int d1;
-    int d2;
-    int d3;
-
-    if (!s || !out)
-        return SQLITE_ERROR;
-
-    d0 = brinDigit(s[0]);
-    d1 = brinDigit(s[1]);
-    d2 = brinDigit(s[2]);
-    d3 = brinDigit(s[3]);
-
-    if (d0 < 0 || d1 < 0 || d2 < 0 || d3 < 0)
-        return SQLITE_ERROR;
-
-    *out = d0 * 1000 + d1 * 100 + d2 * 10 + d3;
-    return SQLITE_OK;
-}
-
-
-/* --------------------------------------------------
- * brinIsLeapYear
- *
- * PURPOSE
- * -------
- * Return non-zero if the year is a leap year in the
- * Gregorian calendar.
- * -------------------------------------------------- */
-static int brinIsLeapYear(int year)
-{
-    if ((year % 400) == 0)
-        return 1;
-
-    if ((year % 100) == 0)
-        return 0;
-
-    return (year % 4) == 0;
-}
-
-
-/* --------------------------------------------------
- * brinDaysInMonth
- *
- * PURPOSE
- * -------
- * Return the number of days in a given month.
- *
- * RETURN VALUE
- * ------------
- * 28..31 for valid months.
- * 0 for invalid months.
- * -------------------------------------------------- */
-static int brinDaysInMonth(int year, int month)
-{
-    static const int days[] = {
-        31, 28, 31, 30, 31, 30,
-        31, 31, 30, 31, 30, 31
-    };
-
-    if (month < 1 || month > 12)
-        return 0;
-
-    if (month == 2 && brinIsLeapYear(year))
-        return 29;
-
-    return days[month - 1];
-}
-
 
 /* --------------------------------------------------
  * brinDaysFromCivil
@@ -2043,22 +2341,34 @@ static int brinConnect(
 
     if (strcmp(affinity, "INTEGER") == 0) {
         rc = sqlite3_declare_vtab(db,
-            "CREATE TABLE x( min INTEGER, max INTEGER, "
-            "start_rowid INT, end_rowid INT)"
+            "CREATE TABLE x("
+            "min INTEGER, "
+            "max INTEGER, "
+            "start_rowid INT, "
+            "end_rowid INT, "
+            "needs_recheck INT)"
         );
         v->affinity = BRIN_TYPE_INTEGER;
     }
     if (strcmp(affinity, "REAL") == 0) {
         rc = sqlite3_declare_vtab(db,
-            "CREATE TABLE x( min REAL, max REAL, "
-            "start_rowid INT, end_rowid INT)"
+            "CREATE TABLE x("
+            "min REAL, "
+            "max REAL, "
+            "start_rowid INT, "
+            "end_rowid INT, "
+            "needs_recheck INT)"
         );
         v->affinity = BRIN_TYPE_REAL;
     }
     if (strcmp(affinity, "TEXT") == 0) {
         rc = sqlite3_declare_vtab(db,
-            "CREATE TABLE x( min TEXT, max TEXT, "
-            "start_rowid INT, end_rowid INT)"
+            "CREATE TABLE x("
+            "min TEXT, "
+            "max TEXT, "
+            "start_rowid INT, "
+            "end_rowid INT, "
+            "needs_recheck INT)"
         );
         v->affinity = BRIN_TYPE_TEXT;
     }
@@ -2090,23 +2400,34 @@ static int brinConnect(
  *
  * PURPOSE
  * -------
- * Allocate and initialize a new cursor for this
- * virtual table scan.
+ * Allocate and initialize a cursor.
  *
- * A cursor represents one active scan over the
- * virtual table.
+ * COALESCING NOTE
+ * ---------------
+ * The cursor owns output_ranges. This array is built in
+ * xFilter() and freed in xClose().
  * -------------------------------------------------- */
 static int brinOpen(
     sqlite3_vtab *pVtab,
-    sqlite3_vtab_cursor **ppCursor)
-{
+    sqlite3_vtab_cursor **ppCursor
+){
+    BrinCursor *c;
+
     DEBUG_PRINT("[BRIN] brinOpen()\n");
 
-    BrinCursor *c = calloc(1, sizeof(BrinCursor));
-    if (!c) return SQLITE_NOMEM;
+    c = calloc(1, sizeof(BrinCursor));
+    if (!c)
+        return SQLITE_NOMEM;
 
     c->v = (BrinVtab*)pVtab;
     c->eof = 1;
+
+    c->output_ranges = NULL;
+    c->output_count = 0;
+    c->output_capacity = 0;
+    c->current_output = 0;
+
+    c->needs_recheck_filter = -1;
 
     *ppCursor = &c->base;
     return SQLITE_OK;
@@ -2118,15 +2439,19 @@ static int brinOpen(
  *
  * PURPOSE
  * -------
- * Destroy a cursor previously allocated by xOpen().
- *
- * SQLite calls this when the scan over the virtual table
- * is no longer needed.
+ * Destroy a cursor and release the coalesced output list.
  * -------------------------------------------------- */
 static int brinClose(sqlite3_vtab_cursor *cur)
 {
+    BrinCursor *c = (BrinCursor*)cur;
+
     DEBUG_PRINT("[BRIN] brinClose()\n");
-    free(cur);
+
+    if (c) {
+        brinResetOutputRanges(c);
+        free(c);
+    }
+
     return SQLITE_OK;
 }
 
@@ -2138,26 +2463,32 @@ static int brinClose(sqlite3_vtab_cursor *cur)
  * -------
  * Called by SQLite during query planning.
  *
- * This method does not execute the query. It only tells
- * SQLite which constraints the virtual table can use and
- * estimates how expensive the access path is.
+ * This method tells SQLite which constraints the virtual
+ * table can use and how expensive the scan is expected to
+ * be.
  *
- * SUPPORTED BRIN PATTERN
- * ----------------------
- * This implementation supports one useful access pattern:
+ * SUPPORTED CONSTRAINTS
+ * ---------------------
+ * Required for BRIN range scan:
  *
  *   min <= high
  *   max >= low
  *
- * TEXT-AS-EPOCH NOTE
- * ------------------
- * If the BRIN was created over a TEXT datetime column, the
- * RHS values may be written by the user as:
+ * Optional:
  *
- *   'YYYY-MM-DD HH:MM:SS'
+ *   needs_recheck = 0
+ *   needs_recheck = 1
  *
- * xBestIndex() converts those values to epoch seconds when
- * SQLite exposes them through sqlite3_vtab_rhs_value().
+ * The optional needs_recheck constraint allows SQL to ask
+ * the vtab for only:
+ *
+ *   - fully-covered ranges
+ *   - boundary/recheck ranges
+ *
+ * This is useful with UNION ALL:
+ *
+ *   branch 1 -> needs_recheck = 0, no base-table recheck
+ *   branch 2 -> needs_recheck = 1, with base-table recheck
  * -------------------------------------------------- */
 static int brinBestIndex(
     sqlite3_vtab *pVtab,
@@ -2167,6 +2498,7 @@ static int brinBestIndex(
 
     int minTerm = -1;
     int maxTerm = -1;
+    int recheckTerm = -1;
 
     DEBUG_PRINT("[BRIN] brinBestIndex()\n");
     DEBUG_PRINT("total_blocks currently known: %d\n",
@@ -2178,14 +2510,19 @@ static int brinBestIndex(
     pIdxInfo->orderByConsumed = 0;
 
     /*
-     * Find constraints usable by the BRIN:
+     * Find usable constraints.
      *
-     *   column 0: min <= ?
-     *   column 1: max >= ?
+     * Column mapping:
+     *   0 -> min
+     *   1 -> max
+     *   2 -> start_rowid
+     *   3 -> end_rowid
+     *   4 -> needs_recheck
      */
     for (int i = 0; i < pIdxInfo->nConstraint; i++) {
-        const struct sqlite3_index_constraint *c =
-            &pIdxInfo->aConstraint[i];
+        const struct sqlite3_index_constraint *c;
+
+        c = &pIdxInfo->aConstraint[i];
 
         DEBUG_PRINT("Constraint %d usable=%d column=%d op=%d\n",
                     i,
@@ -2210,23 +2547,33 @@ static int brinBestIndex(
             maxTerm = i;
             DEBUG_PRINT("Detected BRIN constraint: max >= ?\n");
         }
+        else if (c->iColumn == 4 &&
+                 c->op == SQLITE_INDEX_CONSTRAINT_EQ)
+        {
+            recheckTerm = i;
+            DEBUG_PRINT(
+                "Detected optional constraint: needs_recheck = ?\n"
+            );
+        }
     }
 
     /*
-     * Accept only the full BRIN range pattern.
+     * The BRIN range scan requires both range bounds.
      */
     if (minTerm >= 0 && maxTerm >= 0) {
         sqlite3_value *pHigh = NULL;
         sqlite3_value *pLow = NULL;
+        sqlite3_value *pRecheck = NULL;
 
         int rcHigh;
         int rcLow;
+        int rcRecheck;
+
+        int needs_recheck_filter = -1;
 
         /*
-         * Pass values to xFilter().
-         *
-         * argv[0] = high from min <= high
-         * argv[1] = low  from max >= low
+         * argv[0] in xFilter = high
+         * argv[1] in xFilter = low
          */
         pIdxInfo->aConstraintUsage[minTerm].argvIndex = 1;
         pIdxInfo->aConstraintUsage[minTerm].omit = 1;
@@ -2234,11 +2581,47 @@ static int brinBestIndex(
         pIdxInfo->aConstraintUsage[maxTerm].argvIndex = 2;
         pIdxInfo->aConstraintUsage[maxTerm].omit = 1;
 
+        /*
+         * Optional:
+         *
+         * argv[2] in xFilter = needs_recheck filter.
+         */
+        if (recheckTerm >= 0) {
+            pIdxInfo->aConstraintUsage[recheckTerm].argvIndex = 3;
+            pIdxInfo->aConstraintUsage[recheckTerm].omit = 1;
+        }
+
+        /*
+         * Try to compute a better estimate if RHS values are
+         * known at planning time.
+         */
         rcHigh =
             sqlite3_vtab_rhs_value(pIdxInfo, minTerm, &pHigh);
 
         rcLow =
             sqlite3_vtab_rhs_value(pIdxInfo, maxTerm, &pLow);
+
+        if (recheckTerm >= 0) {
+            rcRecheck =
+                sqlite3_vtab_rhs_value(
+                    pIdxInfo,
+                    recheckTerm,
+                    &pRecheck
+                );
+
+            if (rcRecheck == SQLITE_OK && pRecheck != NULL) {
+                int recheck_value;
+
+                recheck_value = sqlite3_value_int(pRecheck);
+
+                if (recheck_value == 0) {
+                    needs_recheck_filter = 0;
+                }
+                else if (recheck_value == 1) {
+                    needs_recheck_filter = 1;
+                }
+            }
+        }
 
         if (rcHigh == SQLITE_OK &&
             rcLow == SQLITE_OK &&
@@ -2258,9 +2641,13 @@ static int brinBestIndex(
             if (okHigh == SQLITE_OK && okLow == SQLITE_OK) {
                 int start = v->total_blocks;
                 int end = -1;
+                int candidate_blocks;
+                int output_ranges;
 
                 if (low > high) {
-                    double tmp = low;
+                    double tmp;
+
+                    tmp = low;
                     low = high;
                     high = tmp;
                 }
@@ -2280,9 +2667,29 @@ static int brinBestIndex(
                 );
 
                 if (start != v->total_blocks && end >= start) {
-                    int candidate_blocks = end - start + 1;
+                    candidate_blocks = end - start + 1;
 
-                    pIdxInfo->estimatedRows = candidate_blocks;
+                    output_ranges =
+                        brinEstimateOutputRangeCount(
+                            v,
+                            start,
+                            end,
+                            low,
+                            high,
+                            needs_recheck_filter
+                        );
+
+                    if (output_ranges <= 0) {
+                        output_ranges = 1;
+                    }
+
+                    pIdxInfo->estimatedRows = output_ranges;
+
+                    /*
+                     * Cost is still related to candidate blocks,
+                     * because those blocks drive the rowid ranges
+                     * that the base table will read.
+                     */
                     pIdxInfo->estimatedCost =
                         (double)candidate_blocks;
 
@@ -2296,13 +2703,13 @@ static int brinBestIndex(
                         "Exact candidate blocks: %d\n",
                         candidate_blocks
                     );
+
+                    DEBUG_PRINT(
+                        "Estimated coalesced output ranges: %d\n",
+                        output_ranges
+                    );
                 }
                 else {
-                    /*
-                     * No blocks match the literal range.
-                     *
-                     * Keep a tiny estimate instead of a huge one.
-                     */
                     pIdxInfo->estimatedRows = 1;
                     pIdxInfo->estimatedCost = 1.0;
 
@@ -2312,10 +2719,6 @@ static int brinBestIndex(
                 }
             }
             else {
-                /*
-                 * Values were present but could not be parsed.
-                 * Use the thesis fallback estimate.
-                 */
                 pIdxInfo->estimatedRows = 2;
                 pIdxInfo->estimatedCost = 2.0;
 
@@ -2326,19 +2729,19 @@ static int brinBestIndex(
         }
         else {
             /*
-             * This is common when the query uses host parameters.
+             * This is common when using host parameters.
+             *
+             * With coalescing, the output is usually small:
+             * left boundary, middle fully-covered, right boundary.
              */
-            pIdxInfo->estimatedRows = 2;
-            pIdxInfo->estimatedCost = 2.0;
+            pIdxInfo->estimatedRows = 3;
+            pIdxInfo->estimatedCost = 3.0;
 
             DEBUG_PRINT(
                 "RHS values not available in xBestIndex\n"
             );
         }
 
-        /*
-         * BRIN summaries are naturally ordered by start_rowid.
-         */
         if (pIdxInfo->nOrderBy == 1 &&
             pIdxInfo->aOrderBy[0].iColumn == 2 &&
             pIdxInfo->aOrderBy[0].desc == 0)
@@ -2354,9 +2757,6 @@ static int brinBestIndex(
             blocks = v->total_blocks;
         }
 
-        /*
-         * No useful BRIN plan without both bounds.
-         */
         pIdxInfo->estimatedRows = blocks;
         pIdxInfo->estimatedCost = 1000000.0;
 
@@ -2374,24 +2774,29 @@ static int brinBestIndex(
  *
  * PURPOSE
  * -------
- * Start executing a BRIN scan after SQLite has selected
- * this virtual table access path.
+ * Start executing a BRIN scan.
  *
- * ARGUMENTS
- * ---------
- * These come from xBestIndex():
+ * INPUT FROM xBestIndex
+ * ---------------------
+ * argv[0] = high
+ * argv[1] = low
+ * argv[2] = optional needs_recheck filter
  *
- *   argv[0] = high from min <= high
- *   argv[1] = low  from max >= low
+ * OUTPUT BEHAVIOR
+ * ---------------
+ * The original implementation returned one virtual row per
+ * candidate BRIN block.
  *
- * TEXT-AS-EPOCH NOTE
- * ------------------
- * For TEXT datetime columns, the user passes values like:
+ * This implementation returns one virtual row per coalesced
+ * output segment.
  *
- *   'YYYY-MM-DD HH:MM:SS'
+ * Example:
  *
- * xFilter() converts them to epoch seconds and then uses
- * the same binary search logic as numeric columns.
+ *   block 10      -> needs_recheck = 1
+ *   block 11..20  -> needs_recheck = 0
+ *   block 21      -> needs_recheck = 1
+ *
+ * The cursor will output 3 rows, not 12 rows.
  * -------------------------------------------------- */
 static int brinFilter(
     sqlite3_vtab_cursor *cur,
@@ -2421,21 +2826,46 @@ static int brinFilter(
 
     c->eof = 1;
 
-    if (argc != 2) {
-        DEBUG_PRINT("xFilter called without 2 args\n");
+    brinResetOutputRanges(c);
+
+    c->needs_recheck_filter = -1;
+
+    /*
+     * Valid arg counts:
+     *
+     *   2 -> high, low
+     *   3 -> high, low, needs_recheck
+     */
+    if (argc != 2 && argc != 3) {
+        DEBUG_PRINT("xFilter called with invalid argc=%d\n", argc);
         return SQLITE_OK;
     }
 
-    /*
-     * IMPORTANT:
-     *
-     * If you have not updated brinIncrementalUpdate() for
-     * TEXT-as-epoch, disable this call for static benchmarks.
-     *
-     * The old TEXT version of brinIncrementalUpdate() uses
-     * u.txt.min/u.txt.max as char pointers and will not compile
-     * after changing BrinRange to min_epoch/max_epoch.
-     */
+    if (argc == 3) {
+        int filter_value;
+
+        filter_value = sqlite3_value_int(argv[2]);
+
+        if (filter_value == 0) {
+            c->needs_recheck_filter = 0;
+        }
+        else if (filter_value == 1) {
+            c->needs_recheck_filter = 1;
+        }
+        else {
+            /*
+             * Invalid needs_recheck value.
+             *
+             * Return no rows.
+             */
+            DEBUG_PRINT(
+                "Invalid needs_recheck filter value: %d\n",
+                filter_value
+            );
+            return SQLITE_OK;
+        }
+    }
+
     rc = brinIncrementalUpdate(v);
     if (rc != SQLITE_OK) {
         DEBUG_PRINT("brinIncrementalUpdate failed: %d\n", rc);
@@ -2456,10 +2886,15 @@ static int brinFilter(
     }
 
     if (low > high) {
-        double tmp = low;
+        double tmp;
+
+        tmp = low;
         low = high;
         high = tmp;
     }
+
+    c->low = (sqlite3_int64)low;
+    c->high = (sqlite3_int64)high;
 
     DEBUG_PRINT("Execution range normalized to [%.6f, %.6f]\n",
                 low,
@@ -2484,13 +2919,9 @@ static int brinFilter(
         return SQLITE_OK;
     }
 
-    c->low = (sqlite3_int64)low;
-    c->high = (sqlite3_int64)high;
-
     c->start_block = start;
     c->end_block = end;
     c->current_block = start;
-    c->eof = 0;
 
     candidate_blocks = end - start + 1;
 
@@ -2508,6 +2939,42 @@ static int brinFilter(
                 100.0 * candidate_blocks /
                 (double)v->total_blocks);
 
+    rc = brinBuildOutputRanges(
+        c,
+        start,
+        end,
+        low,
+        high
+    );
+
+    if (rc != SQLITE_OK)
+        return rc;
+
+    if (c->output_count <= 0) {
+        DEBUG_PRINT("No output ranges after filtering\n");
+        return SQLITE_OK;
+    }
+
+    c->current_output = 0;
+    c->eof = 0;
+
+    DEBUG_PRINT("Coalesced output ranges: %d\n",
+                c->output_count);
+
+    for (int i = 0; i < c->output_count; i++) {
+        BrinOutputRange *out;
+
+        out = &c->output_ranges[i];
+
+        DEBUG_PRINT(
+            "  output %d: blocks [%d, %d], needs_recheck=%d\n",
+            i,
+            out->start_block,
+            out->end_block,
+            out->needs_recheck
+        );
+    }
+
     return SQLITE_OK;
 }
 
@@ -2517,21 +2984,25 @@ static int brinFilter(
  *
  * PURPOSE
  * -------
- * Advance the cursor to the next virtual row.
+ * Advance to the next coalesced output range.
  *
- * In this BRIN implementation, one virtual row
- * corresponds to one candidate BRIN block summary.
+ * In the original implementation, xNext() advanced one
+ * BRIN block at a time.
+ *
+ * In this version, xNext() advances one output segment
+ * at a time.
  * -------------------------------------------------- */
 static int brinNext(sqlite3_vtab_cursor *cur)
 {
-    DEBUG_PRINT("[BRIN] brinNext()\n");
-
     BrinCursor *c = (BrinCursor*)cur;
 
-    c->current_block++;
+    DEBUG_PRINT("[BRIN] brinNext()\n");
 
-    if (c->current_block > c->end_block)
+    c->current_output++;
+
+    if (c->current_output >= c->output_count) {
         c->eof = 1;
+    }
 
     return SQLITE_OK;
 }
@@ -2542,15 +3013,14 @@ static int brinNext(sqlite3_vtab_cursor *cur)
  *
  * PURPOSE
  * -------
- * Tell SQLite whether the cursor has finished.
- *
- * Return non-zero if the scan is done.
- * Return zero if a valid current row exists.
+ * Return non-zero when the cursor has no more rows.
  * -------------------------------------------------- */
 static int brinEof(sqlite3_vtab_cursor *cur)
 {
-    DEBUG_PRINT("[BRIN] brinEof()\n");
     BrinCursor *c = (BrinCursor*)cur;
+
+    DEBUG_PRINT("[BRIN] brinEof()\n");
+
     return c->eof;
 }
 
@@ -2560,8 +3030,7 @@ static int brinEof(sqlite3_vtab_cursor *cur)
  *
  * PURPOSE
  * -------
- * Return the value of one visible virtual table column
- * for the current BRIN block.
+ * Return one column for the current coalesced output row.
  *
  * VIRTUAL TABLE SCHEMA
  * --------------------
@@ -2569,19 +3038,19 @@ static int brinEof(sqlite3_vtab_cursor *cur)
  * column 1 -> max
  * column 2 -> start_rowid
  * column 3 -> end_rowid
+ * column 4 -> needs_recheck
  *
- * TEXT-AS-EPOCH NOTE
- * ------------------
- * TEXT min/max values are stored internally as epoch
- * seconds.
+ * COALESCING BEHAVIOR
+ * -------------------
+ * One output row may represent several contiguous BRIN
+ * blocks.
  *
- * When SQLite asks for column 0 or 1, the epoch value is
- * formatted back into:
+ * Therefore:
  *
- *   YYYY-MM-DD HH:MM:SS
- *
- * This keeps the SQL interface readable while keeping the
- * internal representation numeric.
+ *   min         = min of first block in segment
+ *   max         = max of last block in segment
+ *   start_rowid = start_rowid of first block
+ *   end_rowid   = end_rowid of last block
  * -------------------------------------------------- */
 static int brinColumn(
     sqlite3_vtab_cursor *cur,
@@ -2589,7 +3058,9 @@ static int brinColumn(
     int col
 ){
     BrinCursor *c = (BrinCursor*)cur;
-    BrinRange *r;
+    BrinOutputRange *out;
+    BrinRange *first;
+    BrinRange *last;
 
     DEBUG_PRINT("[BRIN] brinColumn()\n");
 
@@ -2598,25 +3069,38 @@ static int brinColumn(
         return SQLITE_OK;
     }
 
-    r = &c->v->ranges[c->current_block];
+    if (c->current_output < 0) {
+        sqlite3_result_null(ctx);
+        return SQLITE_OK;
+    }
+
+    if (c->current_output >= c->output_count) {
+        sqlite3_result_null(ctx);
+        return SQLITE_OK;
+    }
+
+    out = &c->output_ranges[c->current_output];
+
+    first = &c->v->ranges[out->start_block];
+    last = &c->v->ranges[out->end_block];
 
     switch (col)
     {
         case 0:
-            if (r->type == BRIN_TYPE_INTEGER) {
+            if (first->type == BRIN_TYPE_INTEGER) {
                 sqlite3_result_int64(
                     ctx,
-                    (sqlite3_int64)r->u.num.min
+                    (sqlite3_int64)first->u.num.min
                 );
             }
-            else if (r->type == BRIN_TYPE_REAL) {
-                sqlite3_result_double(ctx, r->u.num.min);
+            else if (first->type == BRIN_TYPE_REAL) {
+                sqlite3_result_double(ctx, first->u.num.min);
             }
-            else if (r->type == BRIN_TYPE_TEXT) {
+            else if (first->type == BRIN_TYPE_TEXT) {
                 char buf[BRIN_DATETIME_BUFSZ];
 
                 brinFormatEpochFixed(
-                    r->u.txt.min_epoch,
+                    first->u.txt.min_epoch,
                     buf,
                     sizeof(buf)
                 );
@@ -2634,20 +3118,20 @@ static int brinColumn(
             break;
 
         case 1:
-            if (r->type == BRIN_TYPE_INTEGER) {
+            if (last->type == BRIN_TYPE_INTEGER) {
                 sqlite3_result_int64(
                     ctx,
-                    (sqlite3_int64)r->u.num.max
+                    (sqlite3_int64)last->u.num.max
                 );
             }
-            else if (r->type == BRIN_TYPE_REAL) {
-                sqlite3_result_double(ctx, r->u.num.max);
+            else if (last->type == BRIN_TYPE_REAL) {
+                sqlite3_result_double(ctx, last->u.num.max);
             }
-            else if (r->type == BRIN_TYPE_TEXT) {
+            else if (last->type == BRIN_TYPE_TEXT) {
                 char buf[BRIN_DATETIME_BUFSZ];
 
                 brinFormatEpochFixed(
-                    r->u.txt.max_epoch,
+                    last->u.txt.max_epoch,
                     buf,
                     sizeof(buf)
                 );
@@ -2665,11 +3149,15 @@ static int brinColumn(
             break;
 
         case 2:
-            sqlite3_result_int64(ctx, r->start_rowid);
+            sqlite3_result_int64(ctx, first->start_rowid);
             break;
 
         case 3:
-            sqlite3_result_int64(ctx, r->end_rowid);
+            sqlite3_result_int64(ctx, last->end_rowid);
+            break;
+
+        case 4:
+            sqlite3_result_int(ctx, out->needs_recheck);
             break;
 
         default:
@@ -2686,19 +3174,31 @@ static int brinColumn(
  *
  * PURPOSE
  * -------
- * Return a unique rowid for the current virtual row.
+ * Return a unique rowid for the current virtual output row.
  *
- * In this implementation, the block index itself is a
- * natural unique identifier for each BRIN summary row.
+ * With coalescing, virtual rows are output segments rather
+ * than raw BRIN blocks.
+ *
+ * The simplest stable rowid is current_output + 1.
  * -------------------------------------------------- */
 static int brinRowid(
     sqlite3_vtab_cursor *cur,
-    sqlite3_int64 *pRowid)
-{
+    sqlite3_int64 *pRowid
+){
+    BrinCursor *c = (BrinCursor*)cur;
+
     DEBUG_PRINT("[BRIN] brinRowid()\n");
 
-    BrinCursor *c = (BrinCursor*)cur;
-    *pRowid = c->current_block;
+    if (!pRowid)
+        return SQLITE_ERROR;
+
+    if (c->eof) {
+        *pRowid = 0;
+        return SQLITE_OK;
+    }
+
+    *pRowid = (sqlite3_int64)c->current_output + 1;
+
     return SQLITE_OK;
 }
 
